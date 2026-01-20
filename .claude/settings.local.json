@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(python3:*)",
+      "Bash(source ../.venv/bin/activate)"
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+version: 0.2
+
+env:
+  variables:
+    PYTHON_VERSION: "3.11"
+    S3_RESULTS_BUCKET: "aft-test-results-bucket"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo "Installing dependencies..."
+      - pip install -r requirements.txt
+
+  pre_build:
+    commands:
+      - echo "Pre-release validation"
+      - |
+        python -m cli \
+          --mode aws \
+          --phase pre-release \
+          --accounts-file config/accounts.yaml \
+          --golden-path config/golden_path.yaml
+
+  build:
+    commands:
+      - echo "Running Terraform"
+      - terraform init
+      - terraform plan -out=tfplan
+
+      - echo "Pre-flight validation"
+      - |
+        python -m cli \
+          --mode aws \
+          --phase pre-flight \
+          --accounts-file config/accounts.yaml \
+          --golden-path config/golden_path.yaml \
+          --s3-bucket $S3_RESULTS_BUCKET
+
+      - terraform apply -auto-approve tfplan
+
+  post_build:
+    commands:
+      - echo "Post-release validation"
+      - |
+        python -m cli \
+          --mode aws \
+          --phase post-release \
+          --accounts-file config/accounts.yaml \
+          --golden-path config/golden_path.yaml \
+          --s3-bucket $S3_RESULTS_BUCKET
+
+artifacts:
+  files:
+    - '**/*'

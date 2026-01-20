@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# AWS
+.aws/
+*.pem
+
+# Configuration
+config/accounts.yaml
+config/golden_path.yaml
+*.tfvars
+.terraform/
+*.tfstate*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Results
+results/
+baselines/
+*.log
