@@ -10,9 +10,9 @@ variable "results_bucket_name" {
 }
 
 variable "aft_execution_role" {
-  description = "IAM role name to assume in AFT accounts"
+  description = "IAM role name to assume in target accounts for network testing"
   type        = string
-  default     = "AWSAFTExecution"
+  default     = "AFTNetworkTestRole"
 }
 
 variable "schedule_expression" {

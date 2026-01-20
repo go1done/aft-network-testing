@@ -14,17 +14,17 @@ resource "aws_iam_role" "aft_test_lambda" {
   })
 }
 
-# Policy to assume AFTExecution role
+# Policy to assume AFTNetworkTestRole in target accounts
 resource "aws_iam_role_policy" "aft_assume_role" {
-  name = "assume-aft-execution-role"
+  name = "assume-network-test-role"
   role = aws_iam_role.aft_test_lambda.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = "sts:AssumeRole"
+        Effect   = "Allow"
+        Action   = "sts:AssumeRole"
         Resource = "arn:aws:iam::*:role/${var.aft_execution_role}"
       },
       {
@@ -32,14 +32,17 @@ resource "aws_iam_role_policy" "aft_assume_role" {
         Action = [
           "ec2:Describe*",
           "ec2:CreateNetworkInsightsPath",
+          "ec2:DeleteNetworkInsightsPath",
           "ec2:StartNetworkInsightsAnalysis",
-          "ec2:DescribeNetworkInsightsAnalyses"
+          "ec2:DescribeNetworkInsights*",
+          "ec2:GetTransitGateway*",
+          "ec2:SearchTransitGateway*"
         ]
         Resource = "*"
       },
       {
-        Effect = "Allow"
-        Action = "cloudwatch:PutMetricData"
+        Effect   = "Allow"
+        Action   = "cloudwatch:PutMetricData"
         Resource = "*"
         Condition = {
           StringEquals = {

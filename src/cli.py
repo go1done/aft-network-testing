@@ -55,7 +55,7 @@ Examples:
 
     parser.add_argument(
         '--region',
-        default='us-east-1',
+        default='us-west-2',
         help='AWS region (default: us-east-1)'
     )
 
@@ -68,8 +68,8 @@ Examples:
 
     parser.add_argument(
         '--accounts-file',
-        required=True,
-        help='YAML file with account configurations'
+        default='config/accounts.yaml',
+        help='YAML file with account configurations (default: config/accounts.yaml)'
     )
 
     parser.add_argument(
