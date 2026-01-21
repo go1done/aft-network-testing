@@ -24,8 +24,14 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Discover baseline and generate golden path
+  # Discover all connectivity types (TGW, Peering, VPN, PrivateLink)
+  python cli.py --mode local --profile my-profile --phase discover --accounts-file accounts.yaml
+
+  # Discover with specific TGW
   python cli.py --mode local --profile my-profile --phase discover --accounts-file accounts.yaml --tgw-id tgw-abc123
+
+  # Discover only specific connection types
+  python cli.py --mode local --profile my-profile --phase discover --accounts-file accounts.yaml --connection-types tgw,peering
 
   # Run pre-flight tests
   python cli.py --mode local --profile my-profile --phase pre-flight --accounts-file accounts.yaml --golden-path golden_path.yaml
@@ -79,7 +85,13 @@ Examples:
 
     parser.add_argument(
         '--tgw-id',
-        help='Transit Gateway ID for connectivity discovery'
+        help='Transit Gateway ID (optional, for TGW connectivity discovery)'
+    )
+
+    parser.add_argument(
+        '--connection-types',
+        default='all',
+        help='Connection types to discover: all, or comma-separated list of tgw,peering,vpn,privatelink (default: all)'
     )
 
     parser.add_argument(
@@ -164,6 +176,12 @@ def main():
     if args.verbose:
         print(f"Loaded {len(accounts)} accounts from {args.accounts_file}")
 
+    # Parse connection types
+    if args.connection_types == 'all':
+        connection_types = ['tgw', 'peering', 'vpn', 'privatelink']
+    else:
+        connection_types = [t.strip() for t in args.connection_types.split(',')]
+
     # Dry run - validate configuration only
     if args.dry_run:
         print("Dry run mode - validating configuration...")
@@ -173,7 +191,8 @@ def main():
         print(f"  Phase: {args.phase}")
         print(f"  Accounts: {len(accounts)}")
         print(f"  Golden Path: {args.golden_path}")
-        print(f"  TGW ID: {args.tgw_id or 'not specified'}")
+        print(f"  TGW ID: {args.tgw_id or 'auto-discover'}")
+        print(f"  Connection Types: {', '.join(connection_types)}")
         print(f"  S3 Bucket: {args.s3_bucket or 'not specified'}")
         print("\nConfiguration valid. Ready to execute.")
         sys.exit(0)
@@ -188,14 +207,26 @@ def main():
     # Execute based on phase
     if args.phase == 'discover':
         # Discovery phase
-        golden_path = orchestrator.discover_baseline(accounts, args.tgw_id)
+        golden_path = orchestrator.discover_baseline(
+            accounts,
+            tgw_id=args.tgw_id,
+            connection_types=connection_types
+        )
 
         print(f"\n✓ Discovery complete. Found {len(accounts)} accounts.")
 
         if 'connectivity' in golden_path:
             conn = golden_path['connectivity']
-            print(f"✓ Discovered {conn['total_paths']} VPC-to-VPC connectivity paths")
+            print(f"✓ Discovered {conn['total_paths']} connectivity paths")
             print(f"✓ Observed actual traffic on {conn.get('active_paths', 0)} paths")
+
+            # Print breakdown by connection type
+            by_type = conn.get('by_connection_type', {})
+            if by_type:
+                print("\nBy connection type:")
+                for conn_type, count in by_type.items():
+                    if count > 0:
+                        print(f"  {conn_type.upper()}: {count}")
 
         sys.exit(0)
 

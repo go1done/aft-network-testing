@@ -14,11 +14,13 @@ from models import (
     TestPhase,
     TestResult,
     AccountConfig,
+    ConnectionType,
 )
 from auth import AuthConfig
 
 from reporting import publish_results, print_summary
 from baseline import BaselineDiscovery
+from connectivity import ConnectivityDiscovery
 from reachability import ReachabilityTester
 
 
@@ -54,73 +56,100 @@ class AFTTestOrchestrator:
             with open(golden_path_file, 'r') as f:
                 self.golden_path = yaml.safe_load(f)
 
-    def discover_baseline(self, accounts: List[AccountConfig], tgw_id: str = None) -> Dict:
+    def discover_baseline(self,
+                          accounts: List[AccountConfig],
+                          tgw_id: str = None,
+                          connection_types: List[str] = None) -> Dict:
         """
         Phase 0: Discover baseline and generate golden path.
 
         Args:
             accounts: List of AccountConfig instances
-            tgw_id: Optional Transit Gateway ID for connectivity discovery
+            tgw_id: Optional Transit Gateway ID (required if 'tgw' in connection_types)
+            connection_types: List of connection types to discover: 'tgw', 'peering', 'vpn', 'privatelink'
+                            Defaults to all types.
 
         Returns:
             Generated golden path dictionary
         """
+        if connection_types is None:
+            connection_types = ['tgw', 'peering', 'vpn', 'privatelink']
+
         print("=" * 80)
         print("PHASE 0: BASELINE DISCOVERY & GOLDEN PATH GENERATION")
         print("=" * 80)
+        print(f"Connection types to discover: {', '.join(connection_types)}")
 
         # Discover VPC configurations
         baselines = self.discovery.scan_all_accounts(accounts)
         golden_path = self.discovery.generate_golden_path(baselines)
 
-        # Discover VPC-to-VPC connectivity if TGW provided
-        if tgw_id:
-            hub_account_id = self.auth.get_hub_session().client('sts').get_caller_identity()['Account']
-            conn_discovery = ConnectivityDiscovery(
-                auth_config=self.auth,
-                hub_account_id=hub_account_id
-            )
+        # Always discover connectivity (supports multiple connection types)
+        hub_account_id = self.auth.get_hub_session().client('sts').get_caller_identity()['Account']
+        conn_discovery = ConnectivityDiscovery(
+            auth_config=self.auth,
+            hub_account_id=hub_account_id
+        )
 
-            # Convert AccountConfig to dict for connectivity discovery
-            accounts_dict = [
-                {
-                    'account_id': acc.account_id,
-                    'account_name': acc.account_name,
-                    'vpc_id': acc.vpc_id
-                }
-                for acc in accounts
-            ]
-
-            connectivity_patterns = conn_discovery.build_connectivity_map(
-                accounts_dict,
-                tgw_id,
-                use_flow_logs=True
-            )
-
-            golden_path['connectivity'] = {
-                'patterns': [
-                    {
-                        'source_vpc_id': p.source_vpc_id,
-                        'source_account_id': p.source_account_id,
-                        'source_account_name': p.source_account_name,
-                        'dest_vpc_id': p.dest_vpc_id,
-                        'dest_account_id': p.dest_account_id,
-                        'dest_account_name': p.dest_account_name,
-                        'connection_type': p.connection_type.value,
-                        'connection_id': p.connection_id,
-                        'via_tgw': tgw_id,
-                        'expected_reachable': p.expected,
-                        'traffic_observed': p.traffic_observed,
-                        'protocols_observed': list(p.protocols_observed),
-                        'ports_observed': sorted(list(p.ports_observed)),
-                        'use_case': p.use_case
-                    }
-                    for p in connectivity_patterns
-                ],
-                'tgw_id': tgw_id,
-                'total_paths': len(connectivity_patterns),
-                'active_paths': sum(1 for p in connectivity_patterns if p.traffic_observed)
+        # Convert AccountConfig to dict for connectivity discovery
+        accounts_dict = [
+            {
+                'account_id': acc.account_id,
+                'account_name': acc.account_name,
+                'vpc_id': acc.vpc_id
             }
+            for acc in accounts
+        ]
+
+        # Determine which connection types to discover
+        discover_tgw = 'tgw' in connection_types and tgw_id is not None
+        discover_peering = 'peering' in connection_types
+        discover_vpn = 'vpn' in connection_types
+        discover_privatelink = 'privatelink' in connection_types
+
+        # Warn if TGW requested but no tgw_id provided
+        if 'tgw' in connection_types and tgw_id is None:
+            print("⚠️  TGW discovery requested but no --tgw-id provided, skipping TGW discovery")
+
+        connectivity_patterns = conn_discovery.build_connectivity_map(
+            accounts_dict,
+            tgw_id=tgw_id,
+            discover_peering=discover_peering,
+            discover_vpn=discover_vpn,
+            discover_privatelink=discover_privatelink,
+            use_flow_logs=True
+        )
+
+        # Build connectivity section with all connection types
+        golden_path['connectivity'] = {
+            'patterns': [
+                {
+                    'source_vpc_id': p.source_vpc_id,
+                    'source_account_id': p.source_account_id,
+                    'source_account_name': p.source_account_name,
+                    'dest_vpc_id': p.dest_vpc_id,
+                    'dest_account_id': p.dest_account_id,
+                    'dest_account_name': p.dest_account_name,
+                    'connection_type': p.connection_type.value,
+                    'connection_id': p.connection_id,
+                    'expected_reachable': p.expected,
+                    'traffic_observed': p.traffic_observed,
+                    'protocols_observed': list(p.protocols_observed),
+                    'ports_observed': sorted(list(p.ports_observed)),
+                    'use_case': p.use_case
+                }
+                for p in connectivity_patterns
+            ],
+            'tgw_id': tgw_id,
+            'total_paths': len(connectivity_patterns),
+            'active_paths': sum(1 for p in connectivity_patterns if p.traffic_observed),
+            'by_connection_type': {
+                'tgw': sum(1 for p in connectivity_patterns if p.connection_type == ConnectionType.TRANSIT_GATEWAY),
+                'peering': sum(1 for p in connectivity_patterns if p.connection_type == ConnectionType.VPC_PEERING),
+                'vpn': sum(1 for p in connectivity_patterns if p.connection_type == ConnectionType.VPN),
+                'privatelink': sum(1 for p in connectivity_patterns if p.connection_type == ConnectionType.PRIVATELINK),
+            }
+        }
 
         # Save golden path
         with open(self.golden_path_file, 'w') as f:
@@ -179,7 +208,7 @@ class AFTTestOrchestrator:
 
     def run_tests(self, accounts: List[AccountConfig], phase: TestPhase, parallel: bool = True) -> Dict:
         """
-        Execute comprehensive test suite.
+        Execute comprehensive test suite for all connection types.
 
         Args:
             accounts: List of AccountConfig instances
@@ -205,13 +234,18 @@ class AFTTestOrchestrator:
                 if not pattern.get('expected_reachable'):
                     continue
 
+                # Get connection type and ID
+                conn_type_str = pattern.get('connection_type', 'tgw')
+                connection_id = pattern.get('connection_id')
+
                 # Protocol-level test
                 connectivity_tests.append({
                     'source_vpc': pattern['source_vpc_id'],
                     'source_account': pattern['source_account_name'],
                     'dest_vpc': pattern['dest_vpc_id'],
                     'dest_account': pattern['dest_account_name'],
-                    'tgw_id': pattern.get('via_tgw'),
+                    'connection_type': conn_type_str,
+                    'connection_id': connection_id,
                     'protocol': '-1',
                     'port': None
                 })
@@ -224,25 +258,46 @@ class AFTTestOrchestrator:
                             'source_account': pattern['source_account_name'],
                             'dest_vpc': pattern['dest_vpc_id'],
                             'dest_account': pattern['dest_account_name'],
-                            'tgw_id': pattern.get('via_tgw'),
+                            'connection_type': conn_type_str,
+                            'connection_id': connection_id,
                             'protocol': 'tcp',
                             'port': port
                         })
 
+        # Count tests by connection type
+        by_type = {}
+        for test in connectivity_tests:
+            conn_type = test['connection_type']
+            by_type[conn_type] = by_type.get(conn_type, 0) + 1
+
         print(f"Generated {len(connectivity_tests)} connectivity tests from golden path")
+        for conn_type, count in by_type.items():
+            print(f"  {conn_type.upper()}: {count} tests")
 
         # Execute connectivity tests
         if phase != TestPhase.PRE_RELEASE:
             for test in connectivity_tests:
+                conn_type_str = test['connection_type']
                 print(
-                    f"\nTesting: {test['source_account']} → {test['dest_account']} "
+                    f"\nTesting [{conn_type_str.upper()}]: {test['source_account']} → {test['dest_account']} "
                     f"({test['protocol']}:{test.get('port', 'all')})"
                 )
 
-                result = self.tester.test_reachability(
+                # Map string to ConnectionType enum
+                conn_type_map = {
+                    'tgw': ConnectionType.TRANSIT_GATEWAY,
+                    'pcx': ConnectionType.VPC_PEERING,
+                    'vpn': ConnectionType.VPN,
+                    'vpce': ConnectionType.PRIVATELINK,
+                }
+                connection_type = conn_type_map.get(conn_type_str, ConnectionType.TRANSIT_GATEWAY)
+
+                # Use unified test_connectivity method that dispatches by connection type
+                result = self.tester.test_connectivity(
+                    connection_type=connection_type,
                     source_vpc=test['source_vpc'],
                     dest_vpc=test['dest_vpc'],
-                    tgw_id=test['tgw_id'],
+                    connection_id=test['connection_id'],
                     protocol=test['protocol'],
                     port=test.get('port')
                 )
@@ -272,11 +327,14 @@ class AFTTestOrchestrator:
 
         return summary
 
-    def discover_and_generate_golden_path(self, accounts: List[AccountConfig], tgw_id: str = None) -> Dict:
+    def discover_and_generate_golden_path(self,
+                                          accounts: List[AccountConfig],
+                                          tgw_id: str = None,
+                                          connection_types: List[str] = None) -> Dict:
         """
         Alias for discover_baseline for backward compatibility.
         """
-        return self.discover_baseline(accounts, tgw_id)
+        return self.discover_baseline(accounts, tgw_id, connection_types)
 
     def run_test_suite(self, accounts: List[AccountConfig], phase: TestPhase, parallel: bool = True) -> Dict:
         """
