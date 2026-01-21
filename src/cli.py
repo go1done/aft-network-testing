@@ -44,7 +44,12 @@ Examples:
 
     parser.add_argument(
         '--profile',
-        help='AWS CLI profile name (local mode only)'
+        help='AWS CLI profile name for hub account (local mode only)'
+    )
+
+    parser.add_argument(
+        '--profile-pattern',
+        help='Profile pattern for per-account credentials, e.g., "{account_id}" or "acct-{account_id}"'
     )
 
     parser.add_argument(
@@ -141,6 +146,7 @@ def main():
     auth = AuthConfig(
         mode=exec_mode,
         profile_name=args.profile,
+        profile_pattern=args.profile_pattern,
         role_name=args.role,
         region=args.region
     )
