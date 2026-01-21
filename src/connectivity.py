@@ -194,6 +194,35 @@ class ConnectivityDiscovery:
         print(f"  ✓ Found {len(privatelink_connections)} PrivateLink connections")
         return privatelink_connections
 
+    def discover_tgw_ids_from_accounts(self, accounts: List[Dict]) -> List[str]:
+        """Auto-discover TGW IDs from VPC attachments across accounts."""
+        print("Auto-discovering Transit Gateways from account VPCs...")
+
+        tgw_ids = set()
+
+        for account in accounts:
+            try:
+                session = self._get_session(account['account_id'])
+                ec2 = session.client('ec2')
+
+                # Find TGW attachments for this account's VPCs
+                attachments = ec2.describe_transit_gateway_vpc_attachments(
+                    Filters=[{'Name': 'state', 'Values': ['available']}]
+                )
+
+                for att in attachments.get('TransitGatewayVpcAttachments', []):
+                    tgw_ids.add(att['TransitGatewayId'])
+
+            except Exception as e:
+                print(f"  ⚠️  Could not check TGW attachments in {account['account_name']}: {str(e)}")
+
+        if tgw_ids:
+            print(f"  ✓ Found {len(tgw_ids)} Transit Gateway(s): {', '.join(tgw_ids)}")
+        else:
+            print("  ⚠️  No Transit Gateways found attached to account VPCs")
+
+        return list(tgw_ids)
+
     def discover_tgw_topology(self, tgw_id: str) -> TGWTopology:
         """Discover VPC connectivity from Transit Gateway route tables."""
         ec2 = self.hub_session.client('ec2')
@@ -386,6 +415,7 @@ class ConnectivityDiscovery:
     def build_connectivity_map(self,
                                accounts: List[Dict],
                                tgw_id: str = None,
+                               discover_tgw: bool = True,
                                discover_peering: bool = True,
                                discover_vpn: bool = True,
                                discover_privatelink: bool = True,
@@ -393,6 +423,15 @@ class ConnectivityDiscovery:
         """
         Build complete VPC-to-VPC connectivity map.
         Discovers ALL connection types: TGW, Peering, VPN, PrivateLink
+
+        Args:
+            accounts: List of account dicts with account_id, account_name, vpc_id
+            tgw_id: Specific TGW ID to discover (if None, auto-discovers from accounts)
+            discover_tgw: Whether to discover TGW connectivity
+            discover_peering: Whether to discover VPC peering
+            discover_vpn: Whether to discover VPN connections
+            discover_privatelink: Whether to discover PrivateLink
+            use_flow_logs: Whether to analyze flow logs for traffic patterns
         """
         print("\n" + "=" * 80)
         print("DISCOVERING ALL CONNECTIVITY TYPES")
@@ -400,44 +439,57 @@ class ConnectivityDiscovery:
 
         connectivity_patterns = []
         account_map = {acc['account_id']: acc['account_name'] for acc in accounts}
-        vpc_to_account = {acc['vpc_id']: acc for acc in accounts}
+        vpc_to_account = {acc['vpc_id']: acc for acc in accounts if acc.get('vpc_id')}
 
         # 1. Transit Gateway Connectivity
-        if tgw_id:
+        if discover_tgw:
             print("\n[1/4] Transit Gateway Connectivity")
-            tgw_topology = self.discover_tgw_topology(tgw_id)
 
-            print(f"  ✓ Found {len(tgw_topology.attachments)} VPC attachments")
-            print(f"  ✓ Found {len(tgw_topology.route_tables)} route tables")
+            # Auto-discover TGW IDs if not provided
+            if tgw_id:
+                tgw_ids = [tgw_id]
+            else:
+                tgw_ids = self.discover_tgw_ids_from_accounts(accounts)
 
-            for source_vpc, dest_vpcs in tgw_topology.vpc_connectivity_matrix.items():
-                source_acc = vpc_to_account.get(source_vpc, {})
+            for current_tgw_id in tgw_ids:
+                try:
+                    tgw_topology = self.discover_tgw_topology(current_tgw_id)
 
-                for dest_vpc in dest_vpcs:
-                    if source_vpc == dest_vpc:
-                        continue
+                    print(f"  ✓ TGW {current_tgw_id}: {len(tgw_topology.attachments)} VPC attachments, {len(tgw_topology.route_tables)} route tables")
 
-                    dest_acc = vpc_to_account.get(dest_vpc, {})
+                    for source_vpc, dest_vpcs in tgw_topology.vpc_connectivity_matrix.items():
+                        source_acc = vpc_to_account.get(source_vpc, {})
 
-                    connectivity_patterns.append(VPCConnectivityPattern(
-                        source_vpc_id=source_vpc,
-                        source_account_id=source_acc.get('account_id', 'unknown'),
-                        source_account_name=source_acc.get('account_name', 'unknown'),
-                        dest_vpc_id=dest_vpc,
-                        dest_account_id=dest_acc.get('account_id', 'unknown'),
-                        dest_account_name=dest_acc.get('account_name', 'unknown'),
-                        connection_type=ConnectionType.TRANSIT_GATEWAY,
-                        connection_id=tgw_id,
-                        expected=True,
-                        traffic_observed=False,
-                        protocols_observed=set(),
-                        ports_observed=set(),
-                        first_seen=datetime.utcnow().isoformat(),
-                        last_seen=datetime.utcnow().isoformat(),
-                        use_case="general"
-                    ))
+                        for dest_vpc in dest_vpcs:
+                            if source_vpc == dest_vpc:
+                                continue
 
-            print(f"  ✓ Discovered {len(connectivity_patterns)} TGW connectivity paths")
+                            dest_acc = vpc_to_account.get(dest_vpc, {})
+
+                            connectivity_patterns.append(VPCConnectivityPattern(
+                                source_vpc_id=source_vpc,
+                                source_account_id=source_acc.get('account_id', 'unknown'),
+                                source_account_name=source_acc.get('account_name', 'unknown'),
+                                dest_vpc_id=dest_vpc,
+                                dest_account_id=dest_acc.get('account_id', 'unknown'),
+                                dest_account_name=dest_acc.get('account_name', 'unknown'),
+                                connection_type=ConnectionType.TRANSIT_GATEWAY,
+                                connection_id=current_tgw_id,
+                                expected=True,
+                                traffic_observed=False,
+                                protocols_observed=set(),
+                                ports_observed=set(),
+                                first_seen=datetime.utcnow().isoformat(),
+                                last_seen=datetime.utcnow().isoformat(),
+                                use_case="general"
+                            ))
+                except Exception as e:
+                    print(f"  ⚠️  Error discovering TGW {current_tgw_id}: {str(e)}")
+
+            tgw_count = sum(1 for p in connectivity_patterns if p.connection_type == ConnectionType.TRANSIT_GATEWAY)
+            print(f"  ✓ Discovered {tgw_count} TGW connectivity paths")
+        else:
+            print("\n[1/4] Transit Gateway Connectivity - SKIPPED")
 
         # 2. VPC Peering Connectivity
         if discover_peering:

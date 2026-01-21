@@ -106,18 +106,15 @@ class AFTTestOrchestrator:
         )
 
         # Determine which connection types to discover
-        discover_tgw = 'tgw' in connection_types and tgw_id is not None
+        discover_tgw = 'tgw' in connection_types
         discover_peering = 'peering' in connection_types
         discover_vpn = 'vpn' in connection_types
         discover_privatelink = 'privatelink' in connection_types
 
-        # Warn if TGW requested but no tgw_id provided
-        if 'tgw' in connection_types and tgw_id is None:
-            print("⚠️  TGW discovery requested but no --tgw-id provided, skipping TGW discovery")
-
         connectivity_patterns = conn_discovery.build_connectivity_map(
             accounts_dict,
-            tgw_id=tgw_id,
+            tgw_id=tgw_id,  # If None, TGWs will be auto-discovered from account attachments
+            discover_tgw=discover_tgw,
             discover_peering=discover_peering,
             discover_vpn=discover_vpn,
             discover_privatelink=discover_privatelink,
