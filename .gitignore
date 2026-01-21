@@ -12,6 +12,7 @@ build/
 
 # AWS
 .aws/
+.claude
 *.pem
 
 # Configuration
