@@ -47,13 +47,19 @@ class BaselineDiscovery:
         self.auth_config = auth_config
         self.hub_account_id = hub_account_id
         self.region = region
+        self._hub_session = None  # Lazy initialized
 
-        if auth_config:
-            # Integrated mode
-            self.hub_session = auth_config.get_hub_session()
+    def _get_hub_session(self, fallback_account_id: str = None) -> boto3.Session:
+        """Get hub session, lazy initialized."""
+        if self._hub_session:
+            return self._hub_session
+
+        if self.auth_config:
+            self._hub_session = self.auth_config.get_hub_session(fallback_account_id=fallback_account_id)
         else:
-            # Standalone mode
-            self.hub_session = boto3.Session(region_name=region)
+            self._hub_session = boto3.Session(region_name=self.region)
+
+        return self._hub_session
 
     def _get_session(self, account_id: str) -> boto3.Session:
         """Get session for target account."""
@@ -61,7 +67,7 @@ class BaselineDiscovery:
             return self.auth_config.get_account_session(account_id)
         else:
             # Standalone mode - use default session (for local testing)
-            return self.hub_session
+            return self._get_hub_session()
 
     def discover_vpc_baseline(self, ec2_client, vpc_id: str) -> VPCBaseline:
         """Discover VPC configuration."""

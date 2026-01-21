@@ -28,7 +28,8 @@ class ConnectivityDiscovery:
     - Standalone mode: ConnectivityDiscovery(hub_account_id=id) with internal session
     """
 
-    def __init__(self, auth_config=None, hub_account_id: str = None, region: str = "us-east-1"):
+    def __init__(self, auth_config=None, hub_account_id: str = None, region: str = "us-east-1",
+                 fallback_account_id: str = None):
         """
         Initialize ConnectivityDiscovery.
 
@@ -36,15 +37,30 @@ class ConnectivityDiscovery:
             auth_config: AuthConfig instance (integrated mode)
             hub_account_id: Hub account ID
             region: AWS region
+            fallback_account_id: Account ID to use for hub session in profile-pattern mode
         """
         self.auth_config = auth_config
         self.hub_account_id = hub_account_id
         self.region = region
+        self._fallback_account_id = fallback_account_id
+        self._hub_session = None  # Lazy initialized
 
-        if auth_config:
-            self.hub_session = auth_config.get_hub_session()
+    def _get_hub_session(self) -> boto3.Session:
+        """Get hub session, lazy initialized."""
+        if self._hub_session:
+            return self._hub_session
+
+        if self.auth_config:
+            self._hub_session = self.auth_config.get_hub_session(fallback_account_id=self._fallback_account_id)
         else:
-            self.hub_session = boto3.Session(region_name=region)
+            self._hub_session = boto3.Session(region_name=self.region)
+
+        return self._hub_session
+
+    @property
+    def hub_session(self):
+        """Lazy-initialized hub session."""
+        return self._get_hub_session()
 
     def _get_session(self, account_id: str) -> boto3.Session:
         """Get session for target account."""
@@ -52,7 +68,7 @@ class ConnectivityDiscovery:
             return self.auth_config.get_account_session(account_id)
         else:
             # Standalone mode - use default session
-            return self.hub_session
+            return self._get_hub_session()
 
     def discover_vpc_peering_connections(self, accounts: List[Dict]) -> List[Dict]:
         """Discover VPC peering connections across accounts."""

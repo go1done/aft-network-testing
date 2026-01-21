@@ -33,15 +33,35 @@ class ReachabilityTester:
         """
         self.auth_config = auth_config
         self.region = region
-
-        if auth_config:
-            self.hub_session = auth_config.get_hub_session()
-        else:
-            self.hub_session = boto3.Session(region_name=region)
-
-        self.ec2 = self.hub_session.client('ec2')
+        self._hub_session = None  # Lazy initialized
+        self._ec2 = None  # Lazy initialized
         # Cache for existing paths: (source, dest, protocol, port) -> path_id
         self._path_cache: Dict[tuple, str] = {}
+
+    def _get_hub_session(self, fallback_account_id: str = None) -> boto3.Session:
+        """Get hub session, lazy initialized."""
+        if self._hub_session:
+            return self._hub_session
+
+        if self.auth_config:
+            self._hub_session = self.auth_config.get_hub_session(fallback_account_id=fallback_account_id)
+        else:
+            self._hub_session = boto3.Session(region_name=self.region)
+
+        return self._hub_session
+
+    @property
+    def ec2(self):
+        """Lazy-initialized EC2 client."""
+        if self._ec2 is None:
+            self._ec2 = self._get_hub_session().client('ec2')
+        return self._ec2
+
+    def set_fallback_account(self, account_id: str):
+        """Set the fallback account ID for profile-pattern mode."""
+        if not self._hub_session and self.auth_config:
+            self._hub_session = self.auth_config.get_hub_session(fallback_account_id=account_id)
+            self._ec2 = self._hub_session.client('ec2')
 
     def find_tgw_attachment(self, vpc_id: str, tgw_id: str, session: boto3.Session = None) -> Optional[str]:
         """Find TGW attachment ARN for a VPC."""

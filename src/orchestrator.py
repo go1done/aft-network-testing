@@ -84,13 +84,6 @@ class AFTTestOrchestrator:
         baselines = self.discovery.scan_all_accounts(accounts)
         golden_path = self.discovery.generate_golden_path(baselines)
 
-        # Always discover connectivity (supports multiple connection types)
-        hub_account_id = self.auth.get_hub_session().client('sts').get_caller_identity()['Account']
-        conn_discovery = ConnectivityDiscovery(
-            auth_config=self.auth,
-            hub_account_id=hub_account_id
-        )
-
         # Convert AccountConfig to dict for connectivity discovery
         accounts_dict = [
             {
@@ -100,6 +93,17 @@ class AFTTestOrchestrator:
             }
             for acc in accounts
         ]
+
+        # Get hub session - use first account as fallback when using profile-pattern
+        first_account_id = accounts[0].account_id if accounts else None
+        hub_session = self.auth.get_hub_session(fallback_account_id=first_account_id)
+        hub_account_id = hub_session.client('sts').get_caller_identity()['Account']
+
+        conn_discovery = ConnectivityDiscovery(
+            auth_config=self.auth,
+            hub_account_id=hub_account_id,
+            fallback_account_id=first_account_id
+        )
 
         # Determine which connection types to discover
         discover_tgw = 'tgw' in connection_types and tgw_id is not None
@@ -222,6 +226,10 @@ class AFTTestOrchestrator:
         print(f"PHASE: {phase.value.upper()}")
         print(f"{'=' * 80}")
 
+        # Set fallback account for profile-pattern mode
+        if accounts:
+            self.tester.set_fallback_account(accounts[0].account_id)
+
         start_time = datetime.utcnow()
         all_results = []
 
@@ -322,8 +330,9 @@ class AFTTestOrchestrator:
             'results': [asdict(r) for r in all_results]
         }
 
-        # Publish results
-        publish_results(summary, self.auth.get_hub_session(), self.s3_bucket)
+        # Publish results - use first account as fallback for profile-pattern mode
+        first_account_id = accounts[0].account_id if accounts else None
+        publish_results(summary, self.auth.get_hub_session(fallback_account_id=first_account_id), self.s3_bucket)
 
         return summary
 

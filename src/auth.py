@@ -42,21 +42,38 @@ class AuthConfig:
         self.region = region
         self._session_cache: Dict[str, Tuple[boto3.Session, datetime]] = {}
 
-    def get_hub_session(self) -> boto3.Session:
+    def get_hub_session(self, fallback_account_id: str = None) -> boto3.Session:
         """
         Get session for hub/shared services account.
+
+        Args:
+            fallback_account_id: Account ID to use when profile_pattern is set
+                                (no single hub profile available)
 
         Returns:
             boto3.Session for hub account
         """
-        if self.mode == ExecutionMode.LOCAL and self.profile_name:
-            return boto3.Session(
-                profile_name=self.profile_name,
-                region_name=self.region
-            )
+        if self.mode == ExecutionMode.LOCAL:
+            if self.profile_name:
+                # Single profile for all accounts
+                return boto3.Session(
+                    profile_name=self.profile_name,
+                    region_name=self.region
+                )
+            elif self.profile_pattern and fallback_account_id:
+                # Per-account profiles - use the fallback account
+                return self.get_account_session(fallback_account_id)
+            else:
+                raise ValueError(
+                    "Local mode requires either --profile or --profile-pattern with accounts"
+                )
         else:
             # In AWS, use default credentials (instance/lambda/codebuild role)
             return boto3.Session(region_name=self.region)
+
+    def uses_profile_pattern(self) -> bool:
+        """Check if using per-account profile pattern."""
+        return self.profile_pattern is not None and self.profile_name is None
 
     def get_account_session(self, account_id: str) -> boto3.Session:
         """
