@@ -1,6 +1,6 @@
 # Multi-Connection Type AFT Testing
 
-## 🎯 Problem Solved
+## Problem Solved
 
 **Your Question:** *"There are also some cases using peering, like backup database from one VPC to another. Is it worthwhile to consider different connection/attachment types?"*
 
@@ -8,7 +8,7 @@
 
 ---
 
-## 🔌 Connection Types Supported
+## Connection Types Supported
 
 | Connection Type | Use Case | Discovery Method | Test Method |
 |----------------|----------|------------------|-------------|
@@ -19,7 +19,7 @@
 
 ---
 
-## 📊 Example Discovered Topology
+## Example Discovered Topology
 
 ### Your Infrastructure
 ```
@@ -87,7 +87,7 @@ connectivity:
 
 ---
 
-## 🚀 Discovery Workflow
+## Discovery Workflow
 
 ### Step 1: Auto-Discover All Connection Types
 
@@ -162,7 +162,7 @@ PrivateLink Tests (2):
 
 ---
 
-## 🎯 Use Case: Database Backup via Peering
+## Use Case: Database Backup via Peering
 
 ### Why Peering for Database Backup?
 
@@ -231,7 +231,7 @@ test_peering_reachability(
 
 ---
 
-## 💡 Smart Features
+## Smart Features
 
 ### 1. Use Case Detection
 ```python
@@ -272,7 +272,7 @@ connectivity:
 
 ---
 
-## 📋 Configuration
+## Configuration
 
 ### Minimal Config Needed
 ```yaml
@@ -310,7 +310,7 @@ connectivity:
 
 ---
 
-## 🔄 Real-World Workflow
+## Real-World Workflow
 
 ### Day 1: Initial Discovery
 ```bash
@@ -346,7 +346,7 @@ python aft_test_orchestrator.py --phase post-release
 
 ---
 
-## ✅ Benefits of Multi-Connection Support
+## Benefits of Multi-Connection Support
 
 1. **Complete Visibility**
    - No blind spots - all connection types tested
@@ -370,7 +370,7 @@ python aft_test_orchestrator.py --phase post-release
 
 ---
 
-## 🎓 Example: Complete Multi-Connection Setup
+## Example: Complete Multi-Connection Setup
 
 ```yaml
 # Discovered golden_path.yaml
@@ -406,8 +406,11 @@ connectivity:
       use_case: service-access
 ```
 
-**This is exactly what you need for real-world AFT deployments!** 🎉
+**This is exactly what you need for real-world AFT deployments!**
 
-update auth logic, using SAML assertion
-account not necessary specify vpc id
-how to prevent NRA pathid duplicate
+---
+
+## See Also
+
+- [DESIGN.md](DESIGN.md) - Architecture and API reference
+- [QUICKSTART.md](QUICKSTART.md) - Getting started guide

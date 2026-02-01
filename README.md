@@ -25,7 +25,7 @@ Infrastructure changes (new VPCs, route table updates, security group modificati
 
 ### Blast Radius Assessment
 
-When making changes, you can run pre-flight tests against the baseline to predict what will break *before* applying changes.
+When making changes, you can run pre-release tests against the baseline to detect drift, then post-release tests to verify connectivity after applying changes.
 
 ### Compliance & Audit
 

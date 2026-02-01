@@ -207,7 +207,7 @@ class AFTTestOrchestrator:
 
         return test_cases
 
-    def run_tests(self, accounts: List[AccountConfig], phase: TestPhase, parallel: bool = True) -> Dict:
+    def run_tests(self, accounts: List[AccountConfig], phase: TestPhase, parallel: bool = True, publish: bool = False) -> Dict:
         """
         Execute comprehensive test suite for all connection types.
 
@@ -215,6 +215,7 @@ class AFTTestOrchestrator:
             accounts: List of AccountConfig instances
             phase: Test phase (PRE_RELEASE, PRE_FLIGHT, POST_RELEASE)
             parallel: Whether to run tests in parallel (reserved for future use)
+            publish: Whether to publish results to CloudWatch/S3 (default: False)
 
         Returns:
             Test summary dictionary
@@ -327,9 +328,10 @@ class AFTTestOrchestrator:
             'results': [asdict(r) for r in all_results]
         }
 
-        # Publish results - use first account as fallback for profile-pattern mode
-        first_account_id = accounts[0].account_id if accounts else None
-        publish_results(summary, self.auth.get_hub_session(fallback_account_id=first_account_id), self.s3_bucket)
+        # Publish results if enabled
+        if publish:
+            first_account_id = accounts[0].account_id if accounts else None
+            publish_results(summary, self.auth.get_hub_session(fallback_account_id=first_account_id), self.s3_bucket)
 
         return summary
 
@@ -342,8 +344,8 @@ class AFTTestOrchestrator:
         """
         return self.discover_baseline(accounts, tgw_id, connection_types)
 
-    def run_test_suite(self, accounts: List[AccountConfig], phase: TestPhase, parallel: bool = True) -> Dict:
+    def run_test_suite(self, accounts: List[AccountConfig], phase: TestPhase, parallel: bool = True, publish: bool = False) -> Dict:
         """
         Alias for run_tests for backward compatibility.
         """
-        return self.run_tests(accounts, phase, parallel)
+        return self.run_tests(accounts, phase, parallel, publish)

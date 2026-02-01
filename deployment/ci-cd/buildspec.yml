@@ -28,16 +28,6 @@ phases:
       - echo "Running Terraform"
       - terraform init
       - terraform plan -out=tfplan
-
-      - echo "Pre-flight validation"
-      - |
-        python -m cli \
-          --mode aws \
-          --phase pre-flight \
-          --accounts-file config/accounts.yaml \
-          --golden-path config/golden_path.yaml \
-          --s3-bucket $S3_RESULTS_BUCKET
-
       - terraform apply -auto-approve tfplan
 
   post_build:

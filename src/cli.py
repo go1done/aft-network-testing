@@ -4,7 +4,7 @@ AFT Network Testing Framework - CLI Entry Point
 
 Usage:
     python cli.py --mode local --phase discover --accounts-file accounts.yaml
-    python cli.py --mode local --phase pre-flight --accounts-file accounts.yaml --golden-path golden_path.yaml
+    python cli.py --mode local --phase post-release --accounts-file accounts.yaml --golden-path golden_path.yaml
 """
 
 import argparse
@@ -33,10 +33,10 @@ Examples:
   # Discover only specific connection types
   python cli.py --mode local --profile my-profile --phase discover --accounts-file accounts.yaml --connection-types tgw,peering
 
-  # Run pre-flight tests
-  python cli.py --mode local --profile my-profile --phase pre-flight --accounts-file accounts.yaml --golden-path golden_path.yaml
+  # Run pre-release tests (before Terraform apply)
+  python cli.py --mode local --profile my-profile --phase pre-release --accounts-file accounts.yaml --golden-path golden_path.yaml
 
-  # Run post-release tests with S3 storage
+  # Run post-release tests (after Terraform apply)
   python cli.py --mode aws --phase post-release --accounts-file accounts.yaml --golden-path golden_path.yaml --s3-bucket my-results-bucket
         """
     )
@@ -72,7 +72,7 @@ Examples:
 
     parser.add_argument(
         '--phase',
-        choices=['discover', 'pre-release', 'pre-flight', 'post-release'],
+        choices=['discover', 'pre-release', 'post-release'],
         required=True,
         help='Test phase to execute'
     )
@@ -106,6 +106,13 @@ Examples:
     )
 
     parser.add_argument(
+        '--publish-results',
+        action='store_true',
+        default=False,
+        help='Publish results to CloudWatch and S3 (default: False)'
+    )
+
+    parser.add_argument(
         '--parallel',
         action='store_true',
         default=True,
@@ -131,6 +138,9 @@ def load_accounts(accounts_file: str) -> list:
     """Load account configurations from YAML file."""
     with open(accounts_file, 'r') as f:
         accounts_data = yaml.safe_load(f)
+
+    if not accounts_data:
+        return []
 
     accounts = []
     for acc in accounts_data.get('accounts', []):
@@ -234,7 +244,6 @@ def main():
         # Test execution phases
         phase_map = {
             'pre-release': TestPhase.PRE_RELEASE,
-            'pre-flight': TestPhase.PRE_FLIGHT,
             'post-release': TestPhase.POST_RELEASE
         }
         phase = phase_map.get(args.phase)
@@ -243,7 +252,7 @@ def main():
             print(f"Error: Unknown phase: {args.phase}")
             sys.exit(1)
 
-        summary = orchestrator.run_tests(accounts, phase, args.parallel)
+        summary = orchestrator.run_tests(accounts, phase, args.parallel, args.publish_results)
 
         # Print summary
         print_summary(summary)

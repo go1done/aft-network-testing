@@ -20,7 +20,6 @@ class ExecutionMode(Enum):
 class TestPhase(Enum):
     """Test execution phase"""
     PRE_RELEASE = "pre-release"
-    PRE_FLIGHT = "pre-flight"
     POST_RELEASE = "post-release"
 
 class TestResult(Enum):
