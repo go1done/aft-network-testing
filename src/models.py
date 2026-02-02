@@ -48,7 +48,7 @@ class AccountConfig:
     account_name: str
     # vpc_id is auto-discovered if not provided
     vpc_id: Optional[str] = None
-    region: str = "us-east-1"
+    region: str = "us-west-2"
     tgw_id: Optional[str] = None
     expected_routes: List[str] = field(default_factory=list)
     test_ports: List[int] = field(default_factory=list)

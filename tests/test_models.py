@@ -79,7 +79,7 @@ class TestAccountConfig:
             account_name="test-account",
         )
         assert config.vpc_id is None
-        assert config.region == "us-east-1"
+        assert config.region == "us-west-2"
         assert config.tgw_id is None
         assert config.expected_routes == []
         assert config.test_ports == []

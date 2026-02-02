@@ -23,7 +23,7 @@ class ReachabilityTester:
     Ensures idempotence by reusing existing Network Insights Paths.
     """
 
-    def __init__(self, auth_config=None, region: str = "us-east-1"):
+    def __init__(self, auth_config=None, region: str = "us-west-2"):
         """
         Initialize ReachabilityTester.
 

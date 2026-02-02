@@ -29,13 +29,13 @@ class BaselineDiscovery:
 
     Supports two modes:
     - Integrated mode: BaselineDiscovery(auth_config=auth)
-    - Standalone mode: BaselineDiscovery(hub_account_id="123", region="us-east-1")
+    - Standalone mode: BaselineDiscovery(hub_account_id="123", region="us-west-2")
     """
 
     def __init__(self,
                  auth_config=None,
                  hub_account_id: str = None,
-                 region: str = "us-east-1"):
+                 region: str = "us-west-2"):
         """
         Initialize BaselineDiscovery.
 

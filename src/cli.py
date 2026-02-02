@@ -73,7 +73,7 @@ Examples:
     parser.add_argument(
         '--region',
         default='us-west-2',
-        help='AWS region (default: us-east-1)'
+        help='AWS region (default: us-west-2)'
     )
 
     parser.add_argument(

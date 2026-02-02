@@ -28,7 +28,7 @@ class ConnectivityDiscovery:
     - Standalone mode: ConnectivityDiscovery(hub_account_id=id) with internal session
     """
 
-    def __init__(self, auth_config=None, hub_account_id: str = None, region: str = "us-east-1",
+    def __init__(self, auth_config=None, hub_account_id: str = None, region: str = "us-west-2",
                  fallback_account_id: str = None):
         """
         Initialize ConnectivityDiscovery.
