@@ -25,19 +25,25 @@ def parse_args():
         epilog="""
 Examples:
   # Discover all connectivity types (TGW, Peering, VPN, PrivateLink)
-  python cli.py --mode local --profile my-profile --phase discover --accounts-file accounts.yaml
+  aft-test --mode local --profile my-profile --phase discover --accounts-file accounts.yaml
 
   # Discover with specific TGW
-  python cli.py --mode local --profile my-profile --phase discover --accounts-file accounts.yaml --tgw-id tgw-abc123
+  aft-test --mode local --profile my-profile --phase discover --accounts-file accounts.yaml --tgw-id tgw-abc123
 
   # Discover only specific connection types
-  python cli.py --mode local --profile my-profile --phase discover --accounts-file accounts.yaml --connection-types tgw,peering
+  aft-test --mode local --profile my-profile --phase discover --accounts-file accounts.yaml --connection-types tgw,peering
+
+  # Export test plan for review/editing (from golden path)
+  aft-test --phase export-test-plan --golden-path golden_path.yaml --test-plan test_plan.yaml
+
+  # Run tests from a test plan (after review/editing)
+  aft-test --mode local --profile my-profile --phase run-test-plan --test-plan test_plan.yaml
 
   # Run pre-release tests (before Terraform apply)
-  python cli.py --mode local --profile my-profile --phase pre-release --accounts-file accounts.yaml --golden-path golden_path.yaml
+  aft-test --mode local --profile my-profile --phase pre-release --accounts-file accounts.yaml --golden-path golden_path.yaml
 
   # Run post-release tests (after Terraform apply)
-  python cli.py --mode aws --phase post-release --accounts-file accounts.yaml --golden-path golden_path.yaml --s3-bucket my-results-bucket
+  aft-test --mode aws --phase post-release --accounts-file accounts.yaml --golden-path golden_path.yaml --s3-bucket my-results-bucket
         """
     )
 
@@ -72,9 +78,15 @@ Examples:
 
     parser.add_argument(
         '--phase',
-        choices=['discover', 'pre-release', 'post-release'],
+        choices=['discover', 'pre-release', 'post-release', 'export-test-plan', 'run-test-plan'],
         required=True,
         help='Test phase to execute'
+    )
+
+    parser.add_argument(
+        '--test-plan',
+        default='./test_plan.yaml',
+        help='Test plan YAML file for export/run (default: ./test_plan.yaml)'
     )
 
     parser.add_argument(
@@ -239,6 +251,29 @@ def main():
                         print(f"  {conn_type.upper()}: {count}")
 
         sys.exit(0)
+
+    elif args.phase == 'export-test-plan':
+        # Export test plan for review
+        result = orchestrator.export_test_plan(args.test_plan)
+        print(f"\n✓ Exported {result['tests_exported']} tests to {result['output_file']}")
+        print("\nYou can now:")
+        print(f"  1. Review/edit {args.test_plan}")
+        print(f"  2. Set 'enabled: false' on tests to skip")
+        print(f"  3. Add notes for documentation")
+        print(f"  4. Run: aft-test --phase run-test-plan --test-plan {args.test_plan}")
+        sys.exit(0)
+
+    elif args.phase == 'run-test-plan':
+        # Run from test plan file
+        try:
+            summary = orchestrator.run_from_test_plan(args.test_plan, args.publish_results)
+        except FileNotFoundError:
+            print(f"Error: Test plan not found: {args.test_plan}")
+            print(f"Run 'aft-test --phase export-test-plan' first to generate a test plan.")
+            sys.exit(1)
+
+        print_summary(summary)
+        sys.exit(0 if summary['failed'] == 0 else 1)
 
     else:
         # Test execution phases

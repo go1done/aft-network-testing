@@ -229,3 +229,238 @@ class TestOrchestratorAliases:
             True,
             True,
         )
+
+
+class TestOrchestratorExportTestPlan:
+    """Test test plan export functionality."""
+
+    def test_export_test_plan_creates_yaml_file(self, tmp_path, sample_golden_path):
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = sample_golden_path
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        result = orchestrator.export_test_plan(str(test_plan_file))
+
+        assert test_plan_file.exists()
+        assert result['tests_exported'] > 0
+
+    def test_export_test_plan_structure(self, tmp_path, sample_golden_path):
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = sample_golden_path
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        orchestrator.export_test_plan(str(test_plan_file))
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        assert 'version' in plan
+        assert 'generated_at' in plan
+        assert 'tests' in plan
+        assert isinstance(plan['tests'], list)
+
+    def test_export_test_plan_test_fields(self, tmp_path, sample_golden_path):
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = sample_golden_path
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        orchestrator.export_test_plan(str(test_plan_file))
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        test = plan['tests'][0]
+        assert 'id' in test
+        assert 'enabled' in test
+        assert test['enabled'] is True
+        assert 'source_vpc' in test
+        assert 'source_account' in test
+        assert 'dest_vpc' in test
+        assert 'dest_account' in test
+        assert 'connection_type' in test
+        assert 'connection_id' in test
+        assert 'protocol' in test
+        assert 'description' in test
+        assert 'notes' in test
+
+    def test_export_test_plan_no_golden_path(self, tmp_path):
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+
+        with pytest.raises(ValueError, match="No golden path loaded"):
+            orchestrator.export_test_plan(str(test_plan_file))
+
+    def test_export_test_plan_includes_port_specific_tests(self, tmp_path, sample_golden_path):
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = sample_golden_path
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        orchestrator.export_test_plan(str(test_plan_file))
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        # Should have protocol-level and port-specific tests
+        protocols = [t['protocol'] for t in plan['tests']]
+        assert '-1' in protocols  # Protocol-level
+        assert 'tcp' in protocols  # Port-specific
+
+
+class TestOrchestratorRunFromTestPlan:
+    """Test running tests from a test plan file."""
+
+    @patch('orchestrator.ReachabilityTester')
+    def test_run_from_test_plan_executes_enabled_tests(self, mock_tester_class, tmp_path):
+        from models import TestCase
+        mock_auth = MagicMock()
+        mock_tester = MagicMock()
+        mock_tester.test_connectivity.return_value = TestCase(
+            name="test",
+            result=TestResult.PASS,
+            message="passed",
+            duration_ms=100,
+        )
+        mock_tester_class.return_value = mock_tester
+
+        # Create a test plan file
+        test_plan = {
+            'version': '1.0',
+            'generated_at': '2024-01-01T00:00:00',
+            'tests': [
+                {
+                    'id': 'test-001',
+                    'enabled': True,
+                    'source_vpc': 'vpc-hub123',
+                    'source_account': 'network-hub',
+                    'dest_vpc': 'vpc-prod456',
+                    'dest_account': 'prod-app',
+                    'connection_type': 'tgw',
+                    'connection_id': 'tgw-xyz789',
+                    'protocol': '-1',
+                    'port': None,
+                    'description': 'Test connectivity',
+                    'notes': '',
+                },
+            ],
+        }
+        test_plan_file = tmp_path / "test_plan.yaml"
+        with open(test_plan_file, 'w') as f:
+            yaml.dump(test_plan, f)
+
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.tester = mock_tester
+
+        summary = orchestrator.run_from_test_plan(str(test_plan_file))
+
+        assert summary['total_tests'] == 1
+        mock_tester.test_connectivity.assert_called_once()
+
+    @patch('orchestrator.ReachabilityTester')
+    def test_run_from_test_plan_skips_disabled_tests(self, mock_tester_class, tmp_path):
+        from models import TestCase
+        mock_auth = MagicMock()
+        mock_tester = MagicMock()
+        mock_tester.test_connectivity.return_value = TestCase(
+            name="test",
+            result=TestResult.PASS,
+            message="passed",
+            duration_ms=100,
+        )
+        mock_tester_class.return_value = mock_tester
+
+        test_plan = {
+            'version': '1.0',
+            'generated_at': '2024-01-01T00:00:00',
+            'tests': [
+                {
+                    'id': 'test-001',
+                    'enabled': False,  # Disabled
+                    'source_vpc': 'vpc-hub123',
+                    'source_account': 'network-hub',
+                    'dest_vpc': 'vpc-prod456',
+                    'dest_account': 'prod-app',
+                    'connection_type': 'tgw',
+                    'connection_id': 'tgw-xyz789',
+                    'protocol': '-1',
+                    'port': None,
+                    'description': 'Test connectivity',
+                    'notes': '',
+                },
+            ],
+        }
+        test_plan_file = tmp_path / "test_plan.yaml"
+        with open(test_plan_file, 'w') as f:
+            yaml.dump(test_plan, f)
+
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.tester = mock_tester
+
+        summary = orchestrator.run_from_test_plan(str(test_plan_file))
+
+        assert summary['total_tests'] == 0
+        assert summary['skipped'] == 1
+        mock_tester.test_connectivity.assert_not_called()
+
+    def test_run_from_test_plan_file_not_found(self, tmp_path):
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+
+        with pytest.raises(FileNotFoundError):
+            orchestrator.run_from_test_plan(str(tmp_path / "nonexistent.yaml"))
+
+    @patch('orchestrator.ReachabilityTester')
+    def test_run_from_test_plan_returns_summary(self, mock_tester_class, tmp_path):
+        from models import TestCase
+        mock_auth = MagicMock()
+        mock_tester = MagicMock()
+        mock_tester.test_connectivity.return_value = TestCase(
+            name="test",
+            result=TestResult.PASS,
+            message="passed",
+            duration_ms=100,
+        )
+        mock_tester_class.return_value = mock_tester
+
+        test_plan = {
+            'version': '1.0',
+            'generated_at': '2024-01-01T00:00:00',
+            'tests': [
+                {
+                    'id': 'test-001',
+                    'enabled': True,
+                    'source_vpc': 'vpc-hub123',
+                    'source_account': 'network-hub',
+                    'dest_vpc': 'vpc-prod456',
+                    'dest_account': 'prod-app',
+                    'connection_type': 'tgw',
+                    'connection_id': 'tgw-xyz789',
+                    'protocol': 'tcp',
+                    'port': 443,
+                    'description': 'Test HTTPS',
+                    'notes': 'User note here',
+                },
+            ],
+        }
+        test_plan_file = tmp_path / "test_plan.yaml"
+        with open(test_plan_file, 'w') as f:
+            yaml.dump(test_plan, f)
+
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.tester = mock_tester
+
+        summary = orchestrator.run_from_test_plan(str(test_plan_file))
+
+        assert 'phase' in summary
+        assert summary['phase'] == 'test-plan'
+        assert 'start_time' in summary
+        assert 'end_time' in summary
+        assert 'total_tests' in summary
+        assert 'passed' in summary
+        assert 'failed' in summary
+        assert 'results' in summary

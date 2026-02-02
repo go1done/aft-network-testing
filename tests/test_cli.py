@@ -145,3 +145,33 @@ class TestGetExecutionMode:
 
     def test_get_execution_mode_unknown_defaults_to_local(self):
         assert get_execution_mode('unknown') == ExecutionMode.LOCAL
+
+
+class TestParseArgsTestPlan:
+    """Test CLI argument parsing for test plan features."""
+
+    def test_parse_export_test_plan_phase(self):
+        with patch.object(sys, 'argv', [
+            'cli',
+            '--phase', 'export-test-plan',
+            '--golden-path', 'golden_path.yaml',
+            '--test-plan', 'test_plan.yaml',
+        ]):
+            args = parse_args()
+            assert args.phase == 'export-test-plan'
+            assert args.test_plan == 'test_plan.yaml'
+
+    def test_parse_run_test_plan_phase(self):
+        with patch.object(sys, 'argv', [
+            'cli',
+            '--phase', 'run-test-plan',
+            '--test-plan', 'my_test_plan.yaml',
+        ]):
+            args = parse_args()
+            assert args.phase == 'run-test-plan'
+            assert args.test_plan == 'my_test_plan.yaml'
+
+    def test_test_plan_default(self):
+        with patch.object(sys, 'argv', ['cli', '--phase', 'discover']):
+            args = parse_args()
+            assert args.test_plan == './test_plan.yaml'

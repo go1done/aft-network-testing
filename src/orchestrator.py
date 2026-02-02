@@ -349,3 +349,180 @@ class AFTTestOrchestrator:
         Alias for run_tests for backward compatibility.
         """
         return self.run_tests(accounts, phase, parallel, publish)
+
+    def export_test_plan(self, output_file: str) -> Dict:
+        """
+        Export test cases to a reviewable/editable YAML file.
+
+        Generates a test plan from the golden path that can be:
+        - Reviewed before execution
+        - Modified (enable/disable tests, add notes)
+        - Loaded back for execution via run_from_test_plan()
+
+        Args:
+            output_file: Path to write the test plan YAML
+
+        Returns:
+            Summary dict with tests_exported count
+
+        Raises:
+            ValueError: If no golden path is loaded
+        """
+        if not self.golden_path:
+            raise ValueError("No golden path loaded. Run discover_baseline first.")
+
+        tests = []
+        test_id = 1
+
+        # Load connectivity patterns from golden path
+        if 'connectivity' in self.golden_path:
+            patterns = self.golden_path['connectivity'].get('patterns', [])
+
+            for pattern in patterns:
+                if not pattern.get('expected_reachable'):
+                    continue
+
+                conn_type = pattern.get('connection_type', 'tgw')
+                connection_id = pattern.get('connection_id')
+
+                # Protocol-level test
+                tests.append({
+                    'id': f'test-{test_id:03d}',
+                    'enabled': True,
+                    'source_vpc': pattern['source_vpc_id'],
+                    'source_account': pattern['source_account_name'],
+                    'dest_vpc': pattern['dest_vpc_id'],
+                    'dest_account': pattern['dest_account_name'],
+                    'connection_type': conn_type,
+                    'connection_id': connection_id,
+                    'protocol': '-1',
+                    'port': None,
+                    'description': f"Protocol-level: {pattern['source_account_name']} -> {pattern['dest_account_name']}",
+                    'notes': '',
+                })
+                test_id += 1
+
+                # Port-specific tests if traffic observed
+                if pattern.get('traffic_observed'):
+                    for port in pattern.get('ports_observed', []):
+                        tests.append({
+                            'id': f'test-{test_id:03d}',
+                            'enabled': True,
+                            'source_vpc': pattern['source_vpc_id'],
+                            'source_account': pattern['source_account_name'],
+                            'dest_vpc': pattern['dest_vpc_id'],
+                            'dest_account': pattern['dest_account_name'],
+                            'connection_type': conn_type,
+                            'connection_id': connection_id,
+                            'protocol': 'tcp',
+                            'port': port,
+                            'description': f"TCP:{port} {pattern['source_account_name']} -> {pattern['dest_account_name']}",
+                            'notes': '',
+                        })
+                        test_id += 1
+
+        test_plan = {
+            'version': '1.0',
+            'generated_at': datetime.utcnow().isoformat(),
+            'source_golden_path': self.golden_path_file,
+            'tests': tests,
+        }
+
+        with open(output_file, 'w') as f:
+            yaml.dump(test_plan, f, default_flow_style=False, sort_keys=False)
+
+        print(f"Exported {len(tests)} tests to {output_file}")
+
+        return {'tests_exported': len(tests), 'output_file': output_file}
+
+    def run_from_test_plan(self, test_plan_file: str, publish: bool = False) -> Dict:
+        """
+        Execute tests from a test plan file.
+
+        Loads a test plan YAML (possibly modified by user) and runs
+        only the enabled tests.
+
+        Args:
+            test_plan_file: Path to test plan YAML file
+            publish: Whether to publish results to CloudWatch/S3
+
+        Returns:
+            Test summary dictionary
+
+        Raises:
+            FileNotFoundError: If test plan file doesn't exist
+        """
+        if not os.path.exists(test_plan_file):
+            raise FileNotFoundError(f"Test plan not found: {test_plan_file}")
+
+        with open(test_plan_file, 'r') as f:
+            test_plan = yaml.safe_load(f)
+
+        print(f"\n{'=' * 80}")
+        print("EXECUTING TEST PLAN")
+        print(f"{'=' * 80}")
+        print(f"Source: {test_plan_file}")
+
+        tests = test_plan.get('tests', [])
+        enabled_tests = [t for t in tests if t.get('enabled', True)]
+        disabled_tests = [t for t in tests if not t.get('enabled', True)]
+
+        print(f"Total tests: {len(tests)}")
+        print(f"Enabled: {len(enabled_tests)}, Disabled: {len(disabled_tests)}")
+
+        start_time = datetime.utcnow()
+        all_results = []
+
+        # Execute enabled tests
+        for test in enabled_tests:
+            print(
+                f"\nTesting [{test['connection_type'].upper()}]: "
+                f"{test['source_account']} -> {test['dest_account']} "
+                f"({test['protocol']}:{test.get('port', 'all')})"
+            )
+
+            # Map string to ConnectionType enum
+            conn_type_map = {
+                'tgw': ConnectionType.TRANSIT_GATEWAY,
+                'pcx': ConnectionType.VPC_PEERING,
+                'vpn': ConnectionType.VPN,
+                'vpce': ConnectionType.PRIVATELINK,
+            }
+            connection_type = conn_type_map.get(
+                test['connection_type'],
+                ConnectionType.TRANSIT_GATEWAY
+            )
+
+            result = self.tester.test_connectivity(
+                connection_type=connection_type,
+                source_vpc=test['source_vpc'],
+                dest_vpc=test['dest_vpc'],
+                connection_id=test['connection_id'],
+                protocol=test['protocol'],
+                port=test.get('port')
+            )
+
+            all_results.append(result)
+
+            status_icon = "✓" if result.result == TestResult.PASS else "✗"
+            print(f"  {status_icon} {result.name}: {result.message}")
+
+        end_time = datetime.utcnow()
+        summary = {
+            'phase': 'test-plan',
+            'source_file': test_plan_file,
+            'start_time': start_time.isoformat(),
+            'end_time': end_time.isoformat(),
+            'duration_seconds': (end_time - start_time).total_seconds(),
+            'total_tests': len(all_results),
+            'passed': sum(1 for r in all_results if r.result == TestResult.PASS),
+            'failed': sum(1 for r in all_results if r.result == TestResult.FAIL),
+            'warnings': sum(1 for r in all_results if r.result == TestResult.WARN),
+            'skipped': len(disabled_tests),
+            'results': [asdict(r) for r in all_results]
+        }
+
+        if publish and self.auth:
+            publish_results(summary, self.auth.get_hub_session(), self.s3_bucket)
+
+        return summary
