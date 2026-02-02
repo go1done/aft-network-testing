@@ -72,21 +72,21 @@ accounts:
   # Network Hub (owns TGW)
   - account_id: "111111111111"
     account_name: "network-hub"
-    region: "us-east-1"
+    region: "us-west-2"
 
   # Production workloads
   - account_id: "222222222222"
     account_name: "prod-app1"
-    region: "us-east-1"
+    region: "us-west-2"
 
   - account_id: "333333333333"
     account_name: "prod-app2"
-    region: "us-east-1"
+    region: "us-west-2"
 
   # Non-prod workloads
   - account_id: "444444444444"
     account_name: "dev-app1"
-    region: "us-east-1"
+    region: "us-west-2"
 ```
 
 ### Discovery Behavior
@@ -118,7 +118,7 @@ AWS Reachability Analyzer is powerful but **does not cover all baseline scenario
 | **Transit Gateway** | Reachability Analyzer | Full path analysis (route tables, SGs, NACLs) |
 | **VPC Peering** | Reachability Analyzer | Full path analysis between ENIs |
 | **VPN** | API status check | Tunnel UP/DOWN status only |
-| **PrivateLink** | API status check | Endpoint state and ENI availability |
+| **PrivateLink** | Reachability Analyzer | Full path analysis to endpoint ENIs |
 
 ### Reachability Analyzer Limitations
 
@@ -137,7 +137,7 @@ The framework supplements Reachability Analyzer with:
 
 1. **VPN Tunnel Status** - Checks `VgwTelemetry` for tunnel health (Reachability Analyzer can't test VPN tunnels to on-prem)
 
-2. **PrivateLink State** - Validates endpoint availability and ENI health (Reachability Analyzer needs specific source/dest, not service endpoints)
+2. **PrivateLink Path Analysis** - Full Reachability Analyzer tests from source ENI to endpoint ENI, validating security groups, NACLs, and routes
 
 3. **Baseline Drift Detection** - Compares current state against golden path (Reachability Analyzer only shows current reachability)
 
@@ -181,7 +181,7 @@ Even with this framework, you may need additional testing for:
 
 ## Quick Start
 
-\`\`\`bash
+```bash
 # Install
 pip install -r requirements.txt
 pip install -e .
@@ -191,11 +191,37 @@ cp config/accounts.yaml.example config/accounts.yaml
 # Edit accounts.yaml
 
 # Discover
-aft-test --phase discover --accounts-file config/accounts.yaml --tgw-id tgw-xxxxx
+aft-test --phase discover --accounts-file config/accounts.yaml
 
 # Test
 aft-test --phase post-release --accounts-file config/accounts.yaml
-\`\`\`
+```
+
+## Test Plan Workflow
+
+For large environments, export a reviewable test plan before execution:
+
+```bash
+# Export test plan (with optional filters to reduce volume)
+aft-test --phase export-test-plan --golden-path golden_path.yaml \
+  --only-active --ports 443,22 --connection-types tgw
+
+# Review/edit test_plan.yaml:
+# - Set 'enabled: false' to skip tests
+# - Add notes for documentation
+
+# Run from test plan
+aft-test --phase run-test-plan --test-plan test_plan.yaml
+```
+
+### Export Filters
+
+| Filter | Description |
+|--------|-------------|
+| `--only-active` | Only patterns with observed traffic |
+| `--ports 443,22` | Only specific ports |
+| `--connection-types tgw,pcx` | Only specific connection types |
+| `--protocol-only` | Skip port-specific tests |
 
 ## Documentation
 
