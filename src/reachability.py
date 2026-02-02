@@ -320,10 +320,27 @@ class ReachabilityTester:
                                       endpoint_id: str,
                                       protocol: str = 'tcp',
                                       port: int = 443) -> TestCase:
-        """Test VPC Endpoint connectivity."""
+        """
+        Test VPC Endpoint connectivity using actual path analysis.
+
+        Unlike status-only checks, this verifies:
+        - Security groups allow traffic
+        - NACLs allow traffic
+        - Route tables have path to endpoint
+
+        Args:
+            vpc_id: Source VPC ID
+            endpoint_id: VPC Endpoint ID (vpce-xxx)
+            protocol: Protocol to test (default: tcp)
+            port: Port to test (default: 443)
+
+        Returns:
+            TestCase with path analysis result
+        """
         start_time = time.time()
 
         try:
+            # Get endpoint details
             endpoint = self.ec2.describe_vpc_endpoints(
                 VpcEndpointIds=[endpoint_id]
             )
@@ -339,25 +356,72 @@ class ReachabilityTester:
             ep = endpoint['VpcEndpoints'][0]
             state = ep['State']
 
-            if state == 'available':
-                healthy_enis = len([
-                    ni for ni in ep.get('NetworkInterfaceIds', [])
-                ])
-
-                return TestCase(
-                    name=f"PrivateLink-{protocol}:{port}",
-                    result=TestResult.PASS,
-                    message=f"VPC Endpoint available with {healthy_enis} ENIs",
-                    duration_ms=int((time.time() - start_time) * 1000),
-                    metadata={'state': state, 'eni_count': healthy_enis}
-                )
-            else:
+            # Fail fast if endpoint not available
+            if state != 'available':
                 return TestCase(
                     name=f"PrivateLink-{protocol}:{port}",
                     result=TestResult.FAIL,
                     message=f"VPC Endpoint state: {state}",
                     duration_ms=int((time.time() - start_time) * 1000)
                 )
+
+            endpoint_enis = ep.get('NetworkInterfaceIds', [])
+            if not endpoint_enis:
+                return TestCase(
+                    name=f"PrivateLink-{protocol}:{port}",
+                    result=TestResult.FAIL,
+                    message="VPC Endpoint has no ENIs",
+                    duration_ms=int((time.time() - start_time) * 1000)
+                )
+
+            # Find source ENI in the VPC
+            source_eni_arn = self._find_suitable_eni(vpc_id)
+            if not source_eni_arn:
+                return TestCase(
+                    name=f"PrivateLink-{protocol}:{port}",
+                    result=TestResult.WARN,
+                    message="No source ENI found in VPC for path analysis. Endpoint is available but cannot verify reachability.",
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    metadata={'state': state, 'endpoint_enis': len(endpoint_enis), 'test_skipped': True}
+                )
+
+            # Build destination ENI ARN (use first endpoint ENI)
+            dest_eni_id = endpoint_enis[0]
+            # Get owner ID from the ENI
+            eni_details = self.ec2.describe_network_interfaces(
+                NetworkInterfaceIds=[dest_eni_id]
+            )
+            if not eni_details['NetworkInterfaces']:
+                return TestCase(
+                    name=f"PrivateLink-{protocol}:{port}",
+                    result=TestResult.FAIL,
+                    message=f"Could not find endpoint ENI {dest_eni_id}",
+                    duration_ms=int((time.time() - start_time) * 1000)
+                )
+
+            dest_owner = eni_details['NetworkInterfaces'][0]['OwnerId']
+            dest_eni_arn = f"arn:aws:ec2:{self.region}:{dest_owner}:network-interface/{dest_eni_id}"
+
+            # Create and run path analysis
+            analysis_id = self._create_reachability_analysis(
+                source_eni_arn, dest_eni_arn, protocol, port
+            )
+
+            result = self._wait_for_analysis(analysis_id)
+            reachable = result.get('NetworkPathFound', False)
+
+            return TestCase(
+                name=f"PrivateLink-{protocol}:{port}",
+                result=TestResult.PASS if reachable else TestResult.FAIL,
+                message=f"Path {'found' if reachable else 'not found'} to endpoint {endpoint_id}",
+                duration_ms=int((time.time() - start_time) * 1000),
+                metadata={
+                    'analysis_id': analysis_id,
+                    'reachable': reachable,
+                    'endpoint_enis': len(endpoint_enis),
+                    'state': state
+                }
+            )
 
         except Exception as e:
             return TestCase(

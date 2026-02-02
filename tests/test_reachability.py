@@ -242,28 +242,102 @@ class TestReachabilityTesterVPN:
 class TestReachabilityTesterPrivateLink:
     """Test PrivateLink connectivity testing."""
 
-    def test_test_privatelink_available(self):
+    def test_test_privatelink_path_analysis_success(self):
+        """Test that PrivateLink does actual path analysis, not just status check."""
         mock_ec2 = MagicMock()
         mock_ec2.describe_vpc_endpoints.return_value = {
             'VpcEndpoints': [{
                 'VpcEndpointId': 'vpce-123',
+                'VpcId': 'vpc-123',
                 'State': 'available',
-                'NetworkInterfaceIds': ['eni-1', 'eni-2'],
+                'NetworkInterfaceIds': ['eni-endpoint-1', 'eni-endpoint-2'],
+            }]
+        }
+        # Mock finding source ENI
+        mock_ec2.describe_network_interfaces.return_value = {
+            'NetworkInterfaces': [{
+                'NetworkInterfaceId': 'eni-source',
+                'OwnerId': '111111111111',
+                'Description': 'Lambda ENI',
+            }]
+        }
+        # Mock path creation and analysis
+        mock_ec2.get_paginator.return_value.paginate.return_value = [{'NetworkInsightsPaths': []}]
+        mock_ec2.create_network_insights_path.return_value = {
+            'NetworkInsightsPath': {'NetworkInsightsPathId': 'nip-123'}
+        }
+        mock_ec2.start_network_insights_analysis.return_value = {
+            'NetworkInsightsAnalysis': {'NetworkInsightsAnalysisId': 'nia-123'}
+        }
+        mock_ec2.describe_network_insights_analyses.return_value = {
+            'NetworkInsightsAnalyses': [{
+                'Status': 'succeeded',
+                'NetworkPathFound': True,
             }]
         }
 
-        tester = ReachabilityTester()
+        tester = ReachabilityTester(region="us-east-1")
         tester._ec2 = mock_ec2
 
         result = tester.test_privatelink_reachability(
             vpc_id="vpc-123",
             endpoint_id="vpce-123",
+            protocol="tcp",
+            port=443,
         )
 
         assert result.result == TestResult.PASS
-        assert "available" in result.message.lower()
+        assert "path" in result.message.lower() or "found" in result.message.lower()
+        # Verify path analysis was called, not just status check
+        mock_ec2.start_network_insights_analysis.assert_called_once()
+
+    def test_test_privatelink_path_analysis_blocked(self):
+        """Test that PrivateLink detects blocked paths (e.g., security group issue)."""
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_vpc_endpoints.return_value = {
+            'VpcEndpoints': [{
+                'VpcEndpointId': 'vpce-123',
+                'VpcId': 'vpc-123',
+                'State': 'available',
+                'NetworkInterfaceIds': ['eni-endpoint-1'],
+            }]
+        }
+        mock_ec2.describe_network_interfaces.return_value = {
+            'NetworkInterfaces': [{
+                'NetworkInterfaceId': 'eni-source',
+                'OwnerId': '111111111111',
+                'Description': 'App ENI',
+            }]
+        }
+        mock_ec2.get_paginator.return_value.paginate.return_value = [{'NetworkInsightsPaths': []}]
+        mock_ec2.create_network_insights_path.return_value = {
+            'NetworkInsightsPath': {'NetworkInsightsPathId': 'nip-123'}
+        }
+        mock_ec2.start_network_insights_analysis.return_value = {
+            'NetworkInsightsAnalysis': {'NetworkInsightsAnalysisId': 'nia-123'}
+        }
+        mock_ec2.describe_network_insights_analyses.return_value = {
+            'NetworkInsightsAnalyses': [{
+                'Status': 'succeeded',
+                'NetworkPathFound': False,  # Path blocked!
+            }]
+        }
+
+        tester = ReachabilityTester(region="us-east-1")
+        tester._ec2 = mock_ec2
+
+        result = tester.test_privatelink_reachability(
+            vpc_id="vpc-123",
+            endpoint_id="vpce-123",
+            protocol="tcp",
+            port=443,
+        )
+
+        assert result.result == TestResult.FAIL
+        assert "not found" in result.message.lower() or "blocked" in result.message.lower()
 
     def test_test_privatelink_not_available(self):
+        """Test that unavailable endpoint fails fast without path analysis."""
         mock_ec2 = MagicMock()
         mock_ec2.describe_vpc_endpoints.return_value = {
             'VpcEndpoints': [{
@@ -282,6 +356,50 @@ class TestReachabilityTesterPrivateLink:
         )
 
         assert result.result == TestResult.FAIL
+        # Should NOT attempt path analysis if endpoint is not available
+        mock_ec2.start_network_insights_analysis.assert_not_called()
+
+    def test_test_privatelink_no_source_eni(self):
+        """Test graceful handling when no source ENI is found."""
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_vpc_endpoints.return_value = {
+            'VpcEndpoints': [{
+                'VpcEndpointId': 'vpce-123',
+                'VpcId': 'vpc-123',
+                'State': 'available',
+                'NetworkInterfaceIds': ['eni-endpoint-1'],
+            }]
+        }
+        mock_ec2.describe_network_interfaces.return_value = {
+            'NetworkInterfaces': []  # No ENIs in VPC
+        }
+
+        tester = ReachabilityTester()
+        tester._ec2 = mock_ec2
+
+        result = tester.test_privatelink_reachability(
+            vpc_id="vpc-123",
+            endpoint_id="vpce-123",
+        )
+
+        assert result.result == TestResult.WARN
+        assert "eni" in result.message.lower() or "source" in result.message.lower()
+
+    def test_test_privatelink_not_found(self):
+        mock_ec2 = MagicMock()
+        mock_ec2.describe_vpc_endpoints.return_value = {
+            'VpcEndpoints': []
+        }
+
+        tester = ReachabilityTester()
+        tester._ec2 = mock_ec2
+
+        result = tester.test_privatelink_reachability(
+            vpc_id="vpc-123",
+            endpoint_id="vpce-notfound",
+        )
+
+        assert result.result == TestResult.SKIP
 
 
 class TestReachabilityTesterPeering:
