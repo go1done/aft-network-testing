@@ -90,6 +90,23 @@ Examples:
     )
 
     parser.add_argument(
+        '--only-active',
+        action='store_true',
+        help='Export only patterns with observed traffic (export-test-plan phase)'
+    )
+
+    parser.add_argument(
+        '--ports',
+        help='Export only specific ports, comma-separated (e.g., 443,22)'
+    )
+
+    parser.add_argument(
+        '--protocol-only',
+        action='store_true',
+        help='Export only protocol-level tests, skip port-specific (export-test-plan phase)'
+    )
+
+    parser.add_argument(
         '--accounts-file',
         default='config/accounts.yaml',
         help='YAML file with account configurations (default: config/accounts.yaml)'
@@ -253,9 +270,29 @@ def main():
         sys.exit(0)
 
     elif args.phase == 'export-test-plan':
+        # Parse ports filter
+        ports_filter = None
+        if args.ports:
+            ports_filter = [int(p.strip()) for p in args.ports.split(',')]
+
+        # Parse connection types (reuse from discover phase)
+        conn_types_filter = None
+        if args.connection_types != 'all':
+            conn_types_filter = [t.strip() for t in args.connection_types.split(',')]
+
         # Export test plan for review
-        result = orchestrator.export_test_plan(args.test_plan)
+        result = orchestrator.export_test_plan(
+            args.test_plan,
+            only_active=args.only_active,
+            ports=ports_filter,
+            connection_types=conn_types_filter,
+            protocol_only=args.protocol_only
+        )
         print(f"\n✓ Exported {result['tests_exported']} tests to {result['output_file']}")
+        if result.get('filtered_patterns'):
+            print(f"  ({result['filtered_patterns']} patterns filtered out)")
+        if result.get('filtered_ports'):
+            print(f"  ({result['filtered_ports']} port tests filtered out)")
         print("\nYou can now:")
         print(f"  1. Review/edit {args.test_plan}")
         print(f"  2. Set 'enabled: false' on tests to skip")

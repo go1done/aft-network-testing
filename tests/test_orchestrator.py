@@ -245,6 +245,160 @@ class TestOrchestratorExportTestPlan:
         assert test_plan_file.exists()
         assert result['tests_exported'] > 0
 
+    def test_export_test_plan_filter_only_active(self, tmp_path):
+        """Test filtering to only active (traffic observed) patterns."""
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = {
+            'connectivity': {
+                'patterns': [
+                    {
+                        'source_vpc_id': 'vpc-1',
+                        'source_account_name': 'account-1',
+                        'dest_vpc_id': 'vpc-2',
+                        'dest_account_name': 'account-2',
+                        'connection_type': 'tgw',
+                        'connection_id': 'tgw-123',
+                        'expected_reachable': True,
+                        'traffic_observed': True,
+                        'ports_observed': [443],
+                    },
+                    {
+                        'source_vpc_id': 'vpc-3',
+                        'source_account_name': 'account-3',
+                        'dest_vpc_id': 'vpc-4',
+                        'dest_account_name': 'account-4',
+                        'connection_type': 'tgw',
+                        'connection_id': 'tgw-123',
+                        'expected_reachable': True,
+                        'traffic_observed': False,  # No traffic observed
+                        'ports_observed': [],
+                    },
+                ]
+            }
+        }
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        result = orchestrator.export_test_plan(str(test_plan_file), only_active=True)
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        # Should only have tests from the active pattern
+        assert all('account-1' in t['source_account'] or 'account-2' in t['dest_account']
+                   for t in plan['tests'])
+        assert not any('account-3' in t['source_account'] for t in plan['tests'])
+
+    def test_export_test_plan_filter_ports(self, tmp_path):
+        """Test filtering to specific ports."""
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = {
+            'connectivity': {
+                'patterns': [
+                    {
+                        'source_vpc_id': 'vpc-1',
+                        'source_account_name': 'account-1',
+                        'dest_vpc_id': 'vpc-2',
+                        'dest_account_name': 'account-2',
+                        'connection_type': 'tgw',
+                        'connection_id': 'tgw-123',
+                        'expected_reachable': True,
+                        'traffic_observed': True,
+                        'ports_observed': [22, 443, 3306, 5432],
+                    },
+                ]
+            }
+        }
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        result = orchestrator.export_test_plan(str(test_plan_file), ports=[443, 22])
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        # Should have protocol-level test + only 443 and 22 port tests
+        port_tests = [t for t in plan['tests'] if t['port'] is not None]
+        ports_in_plan = {t['port'] for t in port_tests}
+        assert ports_in_plan == {443, 22}
+        assert 3306 not in ports_in_plan
+        assert 5432 not in ports_in_plan
+
+    def test_export_test_plan_filter_connection_types(self, tmp_path):
+        """Test filtering by connection type."""
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = {
+            'connectivity': {
+                'patterns': [
+                    {
+                        'source_vpc_id': 'vpc-1',
+                        'source_account_name': 'account-1',
+                        'dest_vpc_id': 'vpc-2',
+                        'dest_account_name': 'account-2',
+                        'connection_type': 'tgw',
+                        'connection_id': 'tgw-123',
+                        'expected_reachable': True,
+                        'traffic_observed': True,
+                        'ports_observed': [443],
+                    },
+                    {
+                        'source_vpc_id': 'vpc-3',
+                        'source_account_name': 'account-3',
+                        'dest_vpc_id': 'vpc-4',
+                        'dest_account_name': 'account-4',
+                        'connection_type': 'pcx',
+                        'connection_id': 'pcx-456',
+                        'expected_reachable': True,
+                        'traffic_observed': True,
+                        'ports_observed': [443],
+                    },
+                ]
+            }
+        }
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        result = orchestrator.export_test_plan(str(test_plan_file), connection_types=['tgw'])
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        # Should only have TGW tests
+        assert all(t['connection_type'] == 'tgw' for t in plan['tests'])
+
+    def test_export_test_plan_protocol_only(self, tmp_path):
+        """Test exporting only protocol-level tests (no port-specific)."""
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = {
+            'connectivity': {
+                'patterns': [
+                    {
+                        'source_vpc_id': 'vpc-1',
+                        'source_account_name': 'account-1',
+                        'dest_vpc_id': 'vpc-2',
+                        'dest_account_name': 'account-2',
+                        'connection_type': 'tgw',
+                        'connection_id': 'tgw-123',
+                        'expected_reachable': True,
+                        'traffic_observed': True,
+                        'ports_observed': [22, 443, 3306],
+                    },
+                ]
+            }
+        }
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        result = orchestrator.export_test_plan(str(test_plan_file), protocol_only=True)
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        # Should only have protocol-level test, no port-specific
+        assert len(plan['tests']) == 1
+        assert plan['tests'][0]['protocol'] == '-1'
+        assert plan['tests'][0]['port'] is None
+
     def test_export_test_plan_structure(self, tmp_path, sample_golden_path):
         mock_auth = MagicMock()
         orchestrator = AFTTestOrchestrator(auth_config=mock_auth)

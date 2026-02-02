@@ -175,3 +175,25 @@ class TestParseArgsTestPlan:
         with patch.object(sys, 'argv', ['cli', '--phase', 'discover']):
             args = parse_args()
             assert args.test_plan == './test_plan.yaml'
+
+    def test_parse_export_filters(self):
+        with patch.object(sys, 'argv', [
+            'cli',
+            '--phase', 'export-test-plan',
+            '--only-active',
+            '--ports', '443,22,3306',
+            '--protocol-only',
+            '--connection-types', 'tgw,pcx',
+        ]):
+            args = parse_args()
+            assert args.only_active is True
+            assert args.ports == '443,22,3306'
+            assert args.protocol_only is True
+            assert args.connection_types == 'tgw,pcx'
+
+    def test_export_filters_defaults(self):
+        with patch.object(sys, 'argv', ['cli', '--phase', 'export-test-plan']):
+            args = parse_args()
+            assert args.only_active is False
+            assert args.ports is None
+            assert args.protocol_only is False

@@ -350,7 +350,12 @@ class AFTTestOrchestrator:
         """
         return self.run_tests(accounts, phase, parallel, publish)
 
-    def export_test_plan(self, output_file: str) -> Dict:
+    def export_test_plan(self,
+                         output_file: str,
+                         only_active: bool = False,
+                         ports: List[int] = None,
+                         connection_types: List[str] = None,
+                         protocol_only: bool = False) -> Dict:
         """
         Export test cases to a reviewable/editable YAML file.
 
@@ -361,9 +366,13 @@ class AFTTestOrchestrator:
 
         Args:
             output_file: Path to write the test plan YAML
+            only_active: Only include patterns with traffic_observed=True
+            ports: Only include these specific ports (e.g., [443, 22])
+            connection_types: Only include these connection types (e.g., ['tgw', 'pcx'])
+            protocol_only: Only export protocol-level tests, skip port-specific
 
         Returns:
-            Summary dict with tests_exported count
+            Summary dict with tests_exported count and filters applied
 
         Raises:
             ValueError: If no golden path is loaded
@@ -373,6 +382,8 @@ class AFTTestOrchestrator:
 
         tests = []
         test_id = 1
+        filtered_patterns = 0
+        filtered_ports = 0
 
         # Load connectivity patterns from golden path
         if 'connectivity' in self.golden_path:
@@ -382,7 +393,18 @@ class AFTTestOrchestrator:
                 if not pattern.get('expected_reachable'):
                     continue
 
+                # Filter: only_active
+                if only_active and not pattern.get('traffic_observed'):
+                    filtered_patterns += 1
+                    continue
+
                 conn_type = pattern.get('connection_type', 'tgw')
+
+                # Filter: connection_types
+                if connection_types and conn_type not in connection_types:
+                    filtered_patterns += 1
+                    continue
+
                 connection_id = pattern.get('connection_id')
 
                 # Protocol-level test
@@ -402,9 +424,14 @@ class AFTTestOrchestrator:
                 })
                 test_id += 1
 
-                # Port-specific tests if traffic observed
-                if pattern.get('traffic_observed'):
+                # Port-specific tests if traffic observed (skip if protocol_only)
+                if not protocol_only and pattern.get('traffic_observed'):
                     for port in pattern.get('ports_observed', []):
+                        # Filter: ports
+                        if ports and port not in ports:
+                            filtered_ports += 1
+                            continue
+
                         tests.append({
                             'id': f'test-{test_id:03d}',
                             'enabled': True,
@@ -421,10 +448,22 @@ class AFTTestOrchestrator:
                         })
                         test_id += 1
 
+        # Build filters summary for metadata
+        filters_applied = {}
+        if only_active:
+            filters_applied['only_active'] = True
+        if ports:
+            filters_applied['ports'] = ports
+        if connection_types:
+            filters_applied['connection_types'] = connection_types
+        if protocol_only:
+            filters_applied['protocol_only'] = True
+
         test_plan = {
             'version': '1.0',
             'generated_at': datetime.utcnow().isoformat(),
             'source_golden_path': self.golden_path_file,
+            'filters': filters_applied if filters_applied else None,
             'tests': tests,
         }
 
@@ -432,8 +471,17 @@ class AFTTestOrchestrator:
             yaml.dump(test_plan, f, default_flow_style=False, sort_keys=False)
 
         print(f"Exported {len(tests)} tests to {output_file}")
+        if filtered_patterns:
+            print(f"  Filtered out {filtered_patterns} patterns")
+        if filtered_ports:
+            print(f"  Filtered out {filtered_ports} port-specific tests")
 
-        return {'tests_exported': len(tests), 'output_file': output_file}
+        return {
+            'tests_exported': len(tests),
+            'output_file': output_file,
+            'filtered_patterns': filtered_patterns,
+            'filtered_ports': filtered_ports,
+        }
 
     def run_from_test_plan(self, test_plan_file: str, publish: bool = False) -> Dict:
         """
