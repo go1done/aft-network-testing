@@ -101,14 +101,14 @@ Examples:
     )
 
     parser.add_argument(
-        '--protocol-only',
-        action='store_true',
-        help='Export only protocol-level tests, skip port-specific (export-test-plan phase)'
+        '--test-ports',
+        help='Alias for --ports (deprecated)'
     )
 
     parser.add_argument(
-        '--test-ports',
-        help='Alias for --ports (deprecated)'
+        '--include-protocol-level',
+        action='store_true',
+        help='Include protocol-level tests (port=null) for production readiness checks'
     )
 
     parser.add_argument(
@@ -296,8 +296,8 @@ def main():
             only_active=args.only_active,
             ports=ports_filter,
             connection_types=conn_types_filter,
-            protocol_only=args.protocol_only,
-            test_ports=test_ports_list
+            test_ports=test_ports_list,
+            include_protocol_level=args.include_protocol_level
         )
         print(f"\n✓ Exported {result['tests_exported']} tests to {result['output_file']}")
         if result.get('filtered_patterns'):

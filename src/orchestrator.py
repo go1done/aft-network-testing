@@ -364,8 +364,8 @@ class AFTTestOrchestrator:
                          only_active: bool = False,
                          ports: List[int] = None,
                          connection_types: List[str] = None,
-                         protocol_only: bool = False,
-                         test_ports: List[int] = None) -> Dict:
+                         test_ports: List[int] = None,
+                         include_protocol_level: bool = False) -> Dict:
         """
         Export test cases to a reviewable/editable YAML file.
 
@@ -383,8 +383,9 @@ class AFTTestOrchestrator:
             connection_types: Only include these connection types (e.g., ['tgw', 'peering'])
                             Accepts both user-friendly names (peering, privatelink) and
                             enum values (pcx, vpce)
-            protocol_only: Only export protocol-level tests, skip port-specific
             test_ports: Generate tests for these ports regardless of ports_allowed (deprecated)
+            include_protocol_level: Include protocol-level tests (port=null) for
+                                   production readiness checks. Default: False.
 
         Returns:
             Summary dict with tests_exported count and filters applied
@@ -444,58 +445,58 @@ class AFTTestOrchestrator:
 
                 connection_id = pattern.get('connection_id')
 
-                # Protocol-level test
-                tests.append({
-                    'id': f'test-{test_id:03d}',
-                    'enabled': True,
-                    'source_vpc': pattern['source_vpc_id'],
-                    'source_account': pattern['source_account_name'],
-                    'dest_vpc': pattern['dest_vpc_id'],
-                    'dest_account': pattern['dest_account_name'],
-                    'connection_type': conn_type,
-                    'connection_id': connection_id,
-                    'protocol': '-1',
-                    'port': None,
-                    'description': f"Protocol-level: {pattern['source_account_name']} -> {pattern['dest_account_name']}",
-                    'notes': '',
-                })
-                test_id += 1
+                # Protocol-level test (optional - for production readiness checks)
+                if include_protocol_level:
+                    tests.append({
+                        'id': f'test-{test_id:03d}',
+                        'enabled': True,
+                        'source_vpc': pattern['source_vpc_id'],
+                        'source_account': pattern['source_account_name'],
+                        'dest_vpc': pattern['dest_vpc_id'],
+                        'dest_account': pattern['dest_account_name'],
+                        'connection_type': conn_type,
+                        'connection_id': connection_id,
+                        'protocol': '-1',
+                        'port': None,
+                        'description': f"Protocol-level: {pattern['source_account_name']} -> {pattern['dest_account_name']}",
+                        'notes': 'Production readiness check',
+                    })
+                    test_id += 1
 
-                # Port-specific tests (skip if protocol_only)
-                if not protocol_only:
-                    # Determine which ports to test for this pattern
-                    ports_to_test = set()
+                # Port-specific tests
+                # Determine which ports to test for this pattern
+                ports_to_test = set()
 
-                    if ports:
-                        # Use intersection of requested ports and allowed ports
-                        ports_to_test = pattern_ports_allowed & set(ports)
-                    elif test_ports:
-                        # test_ports bypasses allowed check (deprecated)
-                        ports_to_test.update(test_ports)
-                    elif pattern_ports_allowed:
-                        # Use all allowed ports from security groups
-                        ports_to_test = pattern_ports_allowed
-                    elif pattern.get('traffic_observed'):
-                        # Fall back to observed ports if no allowed ports discovered
-                        ports_to_test.update(pattern.get('ports_observed', []))
+                if ports:
+                    # Use intersection of requested ports and allowed ports
+                    ports_to_test = pattern_ports_allowed & set(ports)
+                elif test_ports:
+                    # test_ports bypasses allowed check (deprecated)
+                    ports_to_test.update(test_ports)
+                elif pattern_ports_allowed:
+                    # Use all allowed ports from security groups
+                    ports_to_test = pattern_ports_allowed
+                elif pattern.get('traffic_observed'):
+                    # Fall back to observed ports if no allowed ports discovered
+                    ports_to_test.update(pattern.get('ports_observed', []))
 
-                    # Generate tests for collected ports
-                    for port in sorted(ports_to_test):
-                        tests.append({
-                            'id': f'test-{test_id:03d}',
-                            'enabled': True,
-                            'source_vpc': pattern['source_vpc_id'],
-                            'source_account': pattern['source_account_name'],
-                            'dest_vpc': pattern['dest_vpc_id'],
-                            'dest_account': pattern['dest_account_name'],
-                            'connection_type': conn_type,
-                            'connection_id': connection_id,
-                            'protocol': 'tcp',
-                            'port': port,
-                            'description': f"TCP:{port} {pattern['source_account_name']} -> {pattern['dest_account_name']}",
-                            'notes': '',
-                        })
-                        test_id += 1
+                # Generate tests for collected ports
+                for port in sorted(ports_to_test):
+                    tests.append({
+                        'id': f'test-{test_id:03d}',
+                        'enabled': True,
+                        'source_vpc': pattern['source_vpc_id'],
+                        'source_account': pattern['source_account_name'],
+                        'dest_vpc': pattern['dest_vpc_id'],
+                        'dest_account': pattern['dest_account_name'],
+                        'connection_type': conn_type,
+                        'connection_id': connection_id,
+                        'protocol': 'tcp',
+                        'port': port,
+                        'description': f"TCP:{port} {pattern['source_account_name']} -> {pattern['dest_account_name']}",
+                        'notes': '',
+                    })
+                    test_id += 1
 
         # Build filters summary for metadata
         filters_applied = {}
@@ -505,10 +506,10 @@ class AFTTestOrchestrator:
             filters_applied['ports'] = ports
         if connection_types:
             filters_applied['connection_types'] = connection_types
-        if protocol_only:
-            filters_applied['protocol_only'] = True
         if test_ports:
             filters_applied['test_ports'] = test_ports
+        if include_protocol_level:
+            filters_applied['include_protocol_level'] = True
 
         test_plan = {
             'version': '1.0',

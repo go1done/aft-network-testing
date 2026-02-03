@@ -182,13 +182,13 @@ class TestParseArgsTestPlan:
             '--phase', 'export-test-plan',
             '--only-active',
             '--ports', '443,22,3306',
-            '--protocol-only',
+            '--include-protocol-level',
             '--connection-types', 'tgw,pcx',
         ]):
             args = parse_args()
             assert args.only_active is True
             assert args.ports == '443,22,3306'
-            assert args.protocol_only is True
+            assert args.include_protocol_level is True
             assert args.connection_types == 'tgw,pcx'
 
     def test_export_filters_defaults(self):
@@ -196,4 +196,4 @@ class TestParseArgsTestPlan:
             args = parse_args()
             assert args.only_active is False
             assert args.ports is None
-            assert args.protocol_only is False
+            assert args.include_protocol_level is False
