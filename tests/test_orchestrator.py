@@ -366,6 +366,94 @@ class TestOrchestratorExportTestPlan:
         # Should only have TGW tests
         assert all(t['connection_type'] == 'tgw' for t in plan['tests'])
 
+    def test_export_test_plan_connection_type_aliases(self, tmp_path):
+        """Test that user-friendly connection type names are mapped to enum values."""
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = {
+            'connectivity': {
+                'patterns': [
+                    {
+                        'source_vpc_id': 'vpc-1',
+                        'source_account_name': 'account-1',
+                        'dest_vpc_id': 'vpc-2',
+                        'dest_account_name': 'account-2',
+                        'connection_type': 'pcx',  # enum value, not 'peering'
+                        'connection_id': 'pcx-123',
+                        'expected_reachable': True,
+                        'traffic_observed': False,
+                    },
+                    {
+                        'source_vpc_id': 'vpc-3',
+                        'source_account_name': 'account-3',
+                        'dest_vpc_id': 'vpc-4',
+                        'dest_account_name': 'account-4',
+                        'connection_type': 'vpce',  # enum value, not 'privatelink'
+                        'connection_id': 'vpce-456',
+                        'expected_reachable': True,
+                        'traffic_observed': False,
+                    },
+                    {
+                        'source_vpc_id': 'vpc-5',
+                        'source_account_name': 'account-5',
+                        'dest_vpc_id': 'vpc-6',
+                        'dest_account_name': 'account-6',
+                        'connection_type': 'tgw',
+                        'connection_id': 'tgw-789',
+                        'expected_reachable': True,
+                        'traffic_observed': False,
+                    },
+                ]
+            }
+        }
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        # Use user-friendly name 'peering' which should match 'pcx' in golden path
+        result = orchestrator.export_test_plan(str(test_plan_file), connection_types=['peering'])
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        # Should only have peering (pcx) tests
+        assert len(plan['tests']) == 1
+        assert plan['tests'][0]['connection_type'] == 'pcx'
+
+    def test_export_test_plan_test_ports(self, tmp_path):
+        """Test that test_ports generates port tests even without traffic_observed."""
+        mock_auth = MagicMock()
+        orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
+        orchestrator.golden_path = {
+            'connectivity': {
+                'patterns': [
+                    {
+                        'source_vpc_id': 'vpc-1',
+                        'source_account_name': 'account-1',
+                        'dest_vpc_id': 'vpc-2',
+                        'dest_account_name': 'account-2',
+                        'connection_type': 'tgw',
+                        'connection_id': 'tgw-123',
+                        'expected_reachable': True,
+                        'traffic_observed': False,  # No traffic observed
+                        'ports_observed': [],
+                    },
+                ]
+            }
+        }
+
+        test_plan_file = tmp_path / "test_plan.yaml"
+        # Use test_ports to generate port tests regardless of traffic_observed
+        result = orchestrator.export_test_plan(str(test_plan_file), test_ports=[443, 22])
+
+        with open(test_plan_file, 'r') as f:
+            plan = yaml.safe_load(f)
+
+        # Should have protocol-level test + 2 port tests (443, 22)
+        assert len(plan['tests']) == 3
+        port_tests = [t for t in plan['tests'] if t['port'] is not None]
+        assert len(port_tests) == 2
+        ports_in_plan = {t['port'] for t in port_tests}
+        assert ports_in_plan == {443, 22}
+
     def test_export_test_plan_protocol_only(self, tmp_path):
         """Test exporting only protocol-level tests (no port-specific)."""
         mock_auth = MagicMock()

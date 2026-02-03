@@ -107,6 +107,11 @@ Examples:
     )
 
     parser.add_argument(
+        '--test-ports',
+        help='Generate port tests for these ports on ALL patterns, comma-separated (e.g., 443,22,3389). Unlike --ports, this works even without flow logs.'
+    )
+
+    parser.add_argument(
         '--accounts-file',
         default='config/accounts.yaml',
         help='YAML file with account configurations (default: config/accounts.yaml)'
@@ -270,10 +275,15 @@ def main():
         sys.exit(0)
 
     elif args.phase == 'export-test-plan':
-        # Parse ports filter
+        # Parse ports filter (filters observed ports)
         ports_filter = None
         if args.ports:
             ports_filter = [int(p.strip()) for p in args.ports.split(',')]
+
+        # Parse test_ports (generates tests for these ports on all patterns)
+        test_ports_list = None
+        if args.test_ports:
+            test_ports_list = [int(p.strip()) for p in args.test_ports.split(',')]
 
         # Parse connection types (reuse from discover phase)
         conn_types_filter = None
@@ -286,7 +296,8 @@ def main():
             only_active=args.only_active,
             ports=ports_filter,
             connection_types=conn_types_filter,
-            protocol_only=args.protocol_only
+            protocol_only=args.protocol_only,
+            test_ports=test_ports_list
         )
         print(f"\n✓ Exported {result['tests_exported']} tests to {result['output_file']}")
         if result.get('filtered_patterns'):

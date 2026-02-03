@@ -84,12 +84,19 @@ class AFTTestOrchestrator:
         baselines = self.discovery.scan_all_accounts(accounts)
         golden_path = self.discovery.generate_golden_path(baselines)
 
+        # Build lookup of discovered VPCs from baselines
+        discovered_vpcs = {
+            b['account_id']: b['vpc']['vpc_id']
+            for b in baselines if b and 'vpc' in b
+        }
+
         # Convert AccountConfig to dict for connectivity discovery
+        # Use discovered vpc_id from baselines if not provided in AccountConfig
         accounts_dict = [
             {
                 'account_id': acc.account_id,
                 'account_name': acc.account_name,
-                'vpc_id': acc.vpc_id
+                'vpc_id': acc.vpc_id or discovered_vpcs.get(acc.account_id)
             }
             for acc in accounts
         ]
@@ -355,7 +362,8 @@ class AFTTestOrchestrator:
                          only_active: bool = False,
                          ports: List[int] = None,
                          connection_types: List[str] = None,
-                         protocol_only: bool = False) -> Dict:
+                         protocol_only: bool = False,
+                         test_ports: List[int] = None) -> Dict:
         """
         Export test cases to a reviewable/editable YAML file.
 
@@ -367,9 +375,13 @@ class AFTTestOrchestrator:
         Args:
             output_file: Path to write the test plan YAML
             only_active: Only include patterns with traffic_observed=True
-            ports: Only include these specific ports (e.g., [443, 22])
-            connection_types: Only include these connection types (e.g., ['tgw', 'pcx'])
+            ports: Only include these specific ports from observed traffic (e.g., [443, 22])
+            connection_types: Only include these connection types (e.g., ['tgw', 'peering'])
+                            Accepts both user-friendly names (peering, privatelink) and
+                            enum values (pcx, vpce)
             protocol_only: Only export protocol-level tests, skip port-specific
+            test_ports: Generate port-specific tests for these ports on ALL patterns,
+                       regardless of traffic_observed (e.g., [443, 22, 3389])
 
         Returns:
             Summary dict with tests_exported count and filters applied
@@ -379,6 +391,19 @@ class AFTTestOrchestrator:
         """
         if not self.golden_path:
             raise ValueError("No golden path loaded. Run discover_baseline first.")
+
+        # Map user-friendly connection type names to enum values used in golden path
+        conn_type_aliases = {
+            'peering': 'pcx',
+            'privatelink': 'vpce',
+        }
+
+        # Normalize connection_types filter to use enum values
+        normalized_conn_types = None
+        if connection_types:
+            normalized_conn_types = [
+                conn_type_aliases.get(ct, ct) for ct in connection_types
+            ]
 
         tests = []
         test_id = 1
@@ -400,8 +425,8 @@ class AFTTestOrchestrator:
 
                 conn_type = pattern.get('connection_type', 'tgw')
 
-                # Filter: connection_types
-                if connection_types and conn_type not in connection_types:
+                # Filter: connection_types (using normalized values)
+                if normalized_conn_types and conn_type not in normalized_conn_types:
                     filtered_patterns += 1
                     continue
 
@@ -424,14 +449,25 @@ class AFTTestOrchestrator:
                 })
                 test_id += 1
 
-                # Port-specific tests if traffic observed (skip if protocol_only)
-                if not protocol_only and pattern.get('traffic_observed'):
-                    for port in pattern.get('ports_observed', []):
-                        # Filter: ports
-                        if ports and port not in ports:
-                            filtered_ports += 1
-                            continue
+                # Port-specific tests (skip if protocol_only)
+                if not protocol_only:
+                    # Determine which ports to test for this pattern
+                    ports_to_test = set()
 
+                    # Add observed ports (filtered by --ports if specified)
+                    if pattern.get('traffic_observed'):
+                        for port in pattern.get('ports_observed', []):
+                            if ports and port not in ports:
+                                filtered_ports += 1
+                                continue
+                            ports_to_test.add(port)
+
+                    # Add test_ports for ALL patterns (regardless of traffic_observed)
+                    if test_ports:
+                        ports_to_test.update(test_ports)
+
+                    # Generate tests for collected ports
+                    for port in sorted(ports_to_test):
                         tests.append({
                             'id': f'test-{test_id:03d}',
                             'enabled': True,
@@ -458,6 +494,8 @@ class AFTTestOrchestrator:
             filters_applied['connection_types'] = connection_types
         if protocol_only:
             filters_applied['protocol_only'] = True
+        if test_ports:
+            filters_applied['test_ports'] = test_ports
 
         test_plan = {
             'version': '1.0',

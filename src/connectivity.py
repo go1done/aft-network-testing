@@ -613,8 +613,13 @@ class ConnectivityDiscovery:
             for account in accounts:
                 vpc_id = account['vpc_id']
                 account_id = account['account_id']
+                account_name = account.get('account_name', account_id)
 
-                print(f"  Checking flow logs for {account['account_name']}...")
+                if not vpc_id:
+                    print(f"  ⚠️  Skipping flow logs for {account_name} - no VPC discovered")
+                    continue
+
+                print(f"  Checking flow logs for {account_name}...")
 
                 traffic = self.discover_from_flow_logs(vpc_id, account_id, lookback_hours=24)
 
