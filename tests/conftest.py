@@ -157,6 +157,7 @@ def sample_golden_path(sample_connectivity_pattern):
                     "traffic_observed": True,
                     "protocols_observed": ["tcp"],
                     "ports_observed": [443, 22],
+                    "ports_allowed": [443, 22, 80, 8080],  # From security groups
                     "use_case": "general",
                 },
             ],

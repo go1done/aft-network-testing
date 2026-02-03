@@ -97,7 +97,7 @@ Examples:
 
     parser.add_argument(
         '--ports',
-        help='Export only specific ports, comma-separated (e.g., 443,22)'
+        help='Generate port-specific tests for these ports, comma-separated (e.g., 443,22). Works without flow logs.'
     )
 
     parser.add_argument(
@@ -108,7 +108,7 @@ Examples:
 
     parser.add_argument(
         '--test-ports',
-        help='Generate port tests for these ports on ALL patterns, comma-separated (e.g., 443,22,3389). Unlike --ports, this works even without flow logs.'
+        help='Alias for --ports (deprecated)'
     )
 
     parser.add_argument(

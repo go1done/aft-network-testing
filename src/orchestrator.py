@@ -125,7 +125,8 @@ class AFTTestOrchestrator:
             discover_peering=discover_peering,
             discover_vpn=discover_vpn,
             discover_privatelink=discover_privatelink,
-            use_flow_logs=True
+            use_flow_logs=True,
+            baselines=baselines  # Pass baselines for security group port extraction
         )
 
         # Build connectivity section with all connection types
@@ -144,6 +145,7 @@ class AFTTestOrchestrator:
                     'traffic_observed': p.traffic_observed,
                     'protocols_observed': list(p.protocols_observed),
                     'ports_observed': sorted(list(p.ports_observed)),
+                    'ports_allowed': sorted(list(p.ports_allowed)),
                     'use_case': p.use_case
                 }
                 for p in connectivity_patterns
@@ -375,13 +377,14 @@ class AFTTestOrchestrator:
         Args:
             output_file: Path to write the test plan YAML
             only_active: Only include patterns with traffic_observed=True
-            ports: Only include these specific ports from observed traffic (e.g., [443, 22])
+            ports: Filter patterns to those with these ports allowed by security groups,
+                  and generate port-specific tests for them (e.g., [443, 22]).
+                  When not specified, uses all ports_allowed from the golden path.
             connection_types: Only include these connection types (e.g., ['tgw', 'peering'])
                             Accepts both user-friendly names (peering, privatelink) and
                             enum values (pcx, vpce)
             protocol_only: Only export protocol-level tests, skip port-specific
-            test_ports: Generate port-specific tests for these ports on ALL patterns,
-                       regardless of traffic_observed (e.g., [443, 22, 3389])
+            test_ports: Generate tests for these ports regardless of ports_allowed (deprecated)
 
         Returns:
             Summary dict with tests_exported count and filters applied
@@ -408,7 +411,6 @@ class AFTTestOrchestrator:
         tests = []
         test_id = 1
         filtered_patterns = 0
-        filtered_ports = 0
 
         # Load connectivity patterns from golden path
         if 'connectivity' in self.golden_path:
@@ -429,6 +431,16 @@ class AFTTestOrchestrator:
                 if normalized_conn_types and conn_type not in normalized_conn_types:
                     filtered_patterns += 1
                     continue
+
+                # Get allowed ports from security groups (discovered during baseline)
+                pattern_ports_allowed = set(pattern.get('ports_allowed', []))
+
+                # Filter: ports - only include patterns that allow the specified ports
+                if ports:
+                    matching_ports = pattern_ports_allowed & set(ports)
+                    if not matching_ports:
+                        filtered_patterns += 1
+                        continue
 
                 connection_id = pattern.get('connection_id')
 
@@ -454,17 +466,18 @@ class AFTTestOrchestrator:
                     # Determine which ports to test for this pattern
                     ports_to_test = set()
 
-                    # Add observed ports (filtered by --ports if specified)
-                    if pattern.get('traffic_observed'):
-                        for port in pattern.get('ports_observed', []):
-                            if ports and port not in ports:
-                                filtered_ports += 1
-                                continue
-                            ports_to_test.add(port)
-
-                    # Add test_ports for ALL patterns (regardless of traffic_observed)
-                    if test_ports:
+                    if ports:
+                        # Use intersection of requested ports and allowed ports
+                        ports_to_test = pattern_ports_allowed & set(ports)
+                    elif test_ports:
+                        # test_ports bypasses allowed check (deprecated)
                         ports_to_test.update(test_ports)
+                    elif pattern_ports_allowed:
+                        # Use all allowed ports from security groups
+                        ports_to_test = pattern_ports_allowed
+                    elif pattern.get('traffic_observed'):
+                        # Fall back to observed ports if no allowed ports discovered
+                        ports_to_test.update(pattern.get('ports_observed', []))
 
                     # Generate tests for collected ports
                     for port in sorted(ports_to_test):
@@ -511,14 +524,11 @@ class AFTTestOrchestrator:
         print(f"Exported {len(tests)} tests to {output_file}")
         if filtered_patterns:
             print(f"  Filtered out {filtered_patterns} patterns")
-        if filtered_ports:
-            print(f"  Filtered out {filtered_ports} port-specific tests")
 
         return {
             'tests_exported': len(tests),
             'output_file': output_file,
             'filtered_patterns': filtered_patterns,
-            'filtered_ports': filtered_ports,
         }
 
     def run_from_test_plan(self, test_plan_file: str, publish: bool = False) -> Dict:

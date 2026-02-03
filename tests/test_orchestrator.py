@@ -290,7 +290,7 @@ class TestOrchestratorExportTestPlan:
         assert not any('account-3' in t['source_account'] for t in plan['tests'])
 
     def test_export_test_plan_filter_ports(self, tmp_path):
-        """Test filtering to specific ports."""
+        """Test filtering to specific ports based on ports_allowed from security groups."""
         mock_auth = MagicMock()
         orchestrator = AFTTestOrchestrator(auth_config=mock_auth)
         orchestrator.golden_path = {
@@ -306,6 +306,7 @@ class TestOrchestratorExportTestPlan:
                         'expected_reachable': True,
                         'traffic_observed': True,
                         'ports_observed': [22, 443, 3306, 5432],
+                        'ports_allowed': [22, 443, 3306, 5432],  # From security groups
                     },
                 ]
             }
@@ -317,7 +318,7 @@ class TestOrchestratorExportTestPlan:
         with open(test_plan_file, 'r') as f:
             plan = yaml.safe_load(f)
 
-        # Should have protocol-level test + only 443 and 22 port tests
+        # Should have protocol-level test + only 443 and 22 port tests (intersection with ports_allowed)
         port_tests = [t for t in plan['tests'] if t['port'] is not None]
         ports_in_plan = {t['port'] for t in port_tests}
         assert ports_in_plan == {443, 22}

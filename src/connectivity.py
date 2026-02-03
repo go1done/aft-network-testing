@@ -412,6 +412,101 @@ class ConnectivityDiscovery:
         except Exception:
             return None
 
+    def _get_allowed_ports_for_vpc(self, vpc_id: str, baselines: List[Dict], direction: str = 'ingress') -> Set[int]:
+        """
+        Extract allowed ports for a VPC from baseline security group data.
+
+        Args:
+            vpc_id: VPC ID to look up
+            baselines: List of baseline dicts with security groups/allowed_ports
+            direction: 'ingress' for destination VPC, 'egress' for source VPC
+
+        Returns:
+            Set of allowed port numbers
+        """
+        allowed_ports = set()
+
+        if not baselines:
+            return allowed_ports
+
+        # Find baseline for this VPC
+        baseline = None
+        for b in baselines:
+            if b and b.get('vpc', {}).get('vpc_id') == vpc_id:
+                baseline = b
+                break
+
+        if not baseline:
+            return allowed_ports
+
+        # Extract ports from security groups
+        for sg in baseline.get('security_groups', []):
+            rules = sg.get(f'{direction}_rules', [])
+            for rule in rules:
+                protocol = rule.get('protocol', '-1')
+                # Skip non-TCP/UDP protocols for port extraction
+                if protocol not in ['tcp', 'udp', '6', '17']:
+                    if protocol == '-1':
+                        # All traffic allowed - add common ports
+                        allowed_ports.update([22, 80, 443, 3306, 5432, 8080, 8443])
+                    continue
+
+                from_port = rule.get('from_port')
+                to_port = rule.get('to_port')
+
+                if from_port is not None and to_port is not None:
+                    # Limit range to avoid huge sets
+                    if to_port - from_port <= 1000:
+                        allowed_ports.update(range(from_port, to_port + 1))
+                    else:
+                        # For large ranges, just add the endpoints
+                        allowed_ports.add(from_port)
+                        allowed_ports.add(to_port)
+
+        # Also check allowed_ports from baseline (simplified list)
+        for rule in baseline.get('allowed_ports', []):
+            if rule.get('protocol') in ['tcp', 'udp']:
+                from_port = rule.get('from_port', 0)
+                to_port = rule.get('to_port', 0)
+                if from_port and to_port and to_port - from_port <= 1000:
+                    allowed_ports.update(range(from_port, to_port + 1))
+
+        return allowed_ports
+
+    def _calculate_allowed_ports(self, source_vpc: str, dest_vpc: str, baselines: List[Dict]) -> Set[int]:
+        """
+        Calculate allowed ports for a connectivity path based on security groups.
+
+        The allowed ports are the intersection of:
+        - Source VPC's egress rules
+        - Destination VPC's ingress rules
+
+        Args:
+            source_vpc: Source VPC ID
+            dest_vpc: Destination VPC ID
+            baselines: List of baseline dicts
+
+        Returns:
+            Set of ports allowed for this path
+        """
+        if not baselines:
+            return set()
+
+        source_egress = self._get_allowed_ports_for_vpc(source_vpc, baselines, 'egress')
+        dest_ingress = self._get_allowed_ports_for_vpc(dest_vpc, baselines, 'ingress')
+
+        # If either side has no rules discovered, return the other side's ports
+        # (assume open if we can't determine)
+        if not source_egress and not dest_ingress:
+            return set()
+        elif not source_egress:
+            return dest_ingress
+        elif not dest_ingress:
+            return source_egress
+
+        # Return intersection - ports allowed by both source egress and dest ingress
+        return source_egress & dest_ingress
+
     def build_connectivity_map(self,
                                accounts: List[Dict],
                                tgw_id: str = None,
@@ -419,7 +514,8 @@ class ConnectivityDiscovery:
                                discover_peering: bool = True,
                                discover_vpn: bool = True,
                                discover_privatelink: bool = True,
-                               use_flow_logs: bool = True) -> List[VPCConnectivityPattern]:
+                               use_flow_logs: bool = True,
+                               baselines: List[Dict] = None) -> List[VPCConnectivityPattern]:
         """
         Build complete VPC-to-VPC connectivity map.
         Discovers ALL connection types: TGW, Peering, VPN, PrivateLink
@@ -432,6 +528,7 @@ class ConnectivityDiscovery:
             discover_vpn: Whether to discover VPN connections
             discover_privatelink: Whether to discover PrivateLink
             use_flow_logs: Whether to analyze flow logs for traffic patterns
+            baselines: List of baseline dicts with security groups/allowed_ports per VPC
         """
         print("\n" + "=" * 80)
         print("DISCOVERING ALL CONNECTIVITY TYPES")
@@ -479,6 +576,7 @@ class ConnectivityDiscovery:
                                 traffic_observed=False,
                                 protocols_observed=set(),
                                 ports_observed=set(),
+                                ports_allowed=self._calculate_allowed_ports(source_vpc, dest_vpc, baselines),
                                 first_seen=datetime.utcnow().isoformat(),
                                 last_seen=datetime.utcnow().isoformat(),
                                 use_case="general"
@@ -520,6 +618,7 @@ class ConnectivityDiscovery:
                         traffic_observed=False,
                         protocols_observed=set(),
                         ports_observed=set(),
+                        ports_allowed=self._calculate_allowed_ports(source, dest, baselines),
                         first_seen=datetime.utcnow().isoformat(),
                         last_seen=datetime.utcnow().isoformat(),
                         use_case=use_case
@@ -550,6 +649,7 @@ class ConnectivityDiscovery:
                         traffic_observed=False,
                         protocols_observed=set(),
                         ports_observed=set(),
+                        ports_allowed=self._get_allowed_ports_for_vpc(vpn['vpc_id'], baselines, 'egress'),
                         first_seen=datetime.utcnow().isoformat(),
                         last_seen=datetime.utcnow().isoformat(),
                         use_case="hybrid-connectivity"
@@ -580,6 +680,7 @@ class ConnectivityDiscovery:
                         traffic_observed=False,
                         protocols_observed=set(),
                         ports_observed=set(),
+                        ports_allowed=self._get_allowed_ports_for_vpc(pl['vpc_id'], baselines, 'egress'),
                         first_seen=datetime.utcnow().isoformat(),
                         last_seen=datetime.utcnow().isoformat(),
                         use_case="service-access"

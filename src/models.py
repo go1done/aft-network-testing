@@ -152,6 +152,7 @@ class VPCConnectivityPattern:
     traffic_observed: bool
     protocols_observed: Set[str] = field(default_factory=set)
     ports_observed: Set[int] = field(default_factory=set)
+    ports_allowed: Set[int] = field(default_factory=set)  # From security groups/NACLs
     first_seen: str = ""
     last_seen: str = ""
     packet_count: int = 0
