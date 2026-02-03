@@ -693,27 +693,77 @@ class ConnectivityDiscovery:
             print("\n[4/4] PrivateLink Connectivity")
             privatelink_conns = self.discover_privatelink_connections(accounts)
 
+            # Service name to port mapping for common AWS services
+            service_port_map = {
+                'rds': {5432, 3306, 1433, 1521},  # PostgreSQL, MySQL, SQL Server, Oracle
+                'elasticache': {6379, 11211},     # Redis, Memcached
+                'redshift': {5439},
+                'kafka': {9092, 9094},
+                'mq': {5671, 61617},              # RabbitMQ, ActiveMQ
+                'elasticsearch': {443, 9200},
+                'opensearch': {443, 9200},
+                'secretsmanager': {443},
+                'ssm': {443},
+                'ec2messages': {443},
+                'ssmmessages': {443},
+                'logs': {443},
+                'monitoring': {443},
+                'ecr': {443},
+                's3': {443},
+                'sqs': {443},
+                'sns': {443},
+                'kinesis': {443},
+                'kms': {443},
+                'sts': {443},
+                'execute-api': {443},
+                'lambda': {443},
+            }
+
+            def get_service_ports(service_name: str) -> Set[int]:
+                """Extract ports based on AWS service name."""
+                # Service name format: com.amazonaws.region.service or com.amazonaws.vpce.region.vpce-svc-xxx
+                service_lower = service_name.lower()
+                for svc, ports in service_port_map.items():
+                    if svc in service_lower:
+                        return ports
+                # Default to 443 for unknown services
+                return {443}
+
+            def get_service_short_name(service_name: str) -> str:
+                """Extract short service name from full AWS service name."""
+                # com.amazonaws.us-west-2.rds -> rds
+                # com.amazonaws.vpce.us-west-2.vpce-svc-xxx -> vpce-svc-xxx (custom)
+                parts = service_name.split('.')
+                if len(parts) >= 4:
+                    if 'vpce-svc' in service_name:
+                        return parts[-1]  # Custom PrivateLink service ID
+                    return parts[-1]  # AWS service name
+                return service_name
+
             for pl in privatelink_conns:
                 if pl['type'] == 'vpc-endpoint':
                     vpc_acc = next((a for a in accounts if a['vpc_id'] == pl['vpc_id']), {})
+                    service_name = pl['service_name']
+                    short_name = get_service_short_name(service_name)
+                    service_ports = get_service_ports(service_name)
 
                     connectivity_patterns.append(VPCConnectivityPattern(
                         source_vpc_id=pl['vpc_id'],
                         source_account_id=vpc_acc.get('account_id', 'unknown'),
                         source_account_name=vpc_acc.get('account_name', 'unknown'),
-                        dest_vpc_id='privatelink-service',
-                        dest_account_id='service',
-                        dest_account_name=pl['service_name'],
+                        dest_vpc_id=pl['endpoint_id'],          # Endpoint ID instead of generic string
+                        dest_account_id='aws-service',          # Clear indicator it's AWS service
+                        dest_account_name=short_name,           # Short service name (rds, elasticache, etc.)
                         connection_type=ConnectionType.PRIVATELINK,
                         connection_id=pl['endpoint_id'],
                         expected=pl['state'] == 'available',
                         traffic_observed=False,
                         protocols_observed=set(),
                         ports_observed=set(),
-                        ports_allowed=self._get_allowed_ports_for_vpc(pl['vpc_id'], baselines, 'egress'),
+                        ports_allowed=service_ports,            # Auto-detected from service type
                         first_seen=datetime.utcnow().isoformat(),
                         last_seen=datetime.utcnow().isoformat(),
-                        use_case="service-access"
+                        use_case=f"privatelink-{short_name}"    # More descriptive use case
                     ))
 
             pl_count = sum(1 for p in connectivity_patterns if p.connection_type == ConnectionType.PRIVATELINK)
