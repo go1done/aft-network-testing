@@ -554,6 +554,16 @@ class ConnectivityDiscovery:
 
                     print(f"  ✓ TGW {current_tgw_id}: {len(tgw_topology.attachments)} VPC attachments, {len(tgw_topology.route_tables)} route tables")
 
+                    # Enrich vpc_to_account with data from TGW attachments
+                    for att in tgw_topology.attachments:
+                        vpc_id = att.get('vpc_id')
+                        if vpc_id and vpc_id not in vpc_to_account:
+                            vpc_to_account[vpc_id] = {
+                                'account_id': att.get('vpc_owner_id', 'unknown'),
+                                'account_name': att.get('vpc_owner_id', 'unknown'),  # Use account ID as name if not in accounts list
+                                'vpc_id': vpc_id
+                            }
+
                     for source_vpc, dest_vpcs in tgw_topology.vpc_connectivity_matrix.items():
                         source_acc = vpc_to_account.get(source_vpc, {})
 
