@@ -437,6 +437,19 @@ class ConnectivityDiscovery:
                 break
 
         if not baseline:
+            # VPC not in baselines (not in accounts.yaml) - can't determine ports
+            return allowed_ports
+
+        # Check if there are any security groups
+        security_groups = baseline.get('security_groups', [])
+        if not security_groups:
+            # No security groups discovered, use allowed_ports from baseline if available
+            for rule in baseline.get('allowed_ports', []):
+                if rule.get('protocol') in ['tcp', 'udp']:
+                    from_port = rule.get('from_port', 0)
+                    to_port = rule.get('to_port', 0)
+                    if from_port and to_port and to_port - from_port <= 1000:
+                        allowed_ports.update(range(from_port, to_port + 1))
             return allowed_ports
 
         # Extract ports from security groups
@@ -554,21 +567,28 @@ class ConnectivityDiscovery:
 
                     print(f"  ✓ TGW {current_tgw_id}: {len(tgw_topology.attachments)} VPC attachments, {len(tgw_topology.route_tables)} route tables")
 
-                    # Enrich vpc_to_account with data from TGW attachments
-                    for att in tgw_topology.attachments:
-                        vpc_id = att.get('vpc_id')
-                        if vpc_id and vpc_id not in vpc_to_account:
-                            vpc_to_account[vpc_id] = {
-                                'account_id': att.get('vpc_owner_id', 'unknown'),
-                                'account_name': att.get('vpc_owner_id', 'unknown'),  # Use account ID as name if not in accounts list
-                                'vpc_id': vpc_id
-                            }
+                    # Get VPC IDs from accounts.yaml (only these matter for golden path)
+                    account_vpc_ids = {acc['vpc_id'] for acc in accounts if acc.get('vpc_id')}
+
+                    # Count VPCs attached to TGW but not in accounts.yaml
+                    external_vpcs = [att['vpc_id'] for att in tgw_topology.attachments
+                                    if att.get('vpc_id') and att['vpc_id'] not in account_vpc_ids]
+                    if external_vpcs:
+                        print(f"  ℹ️  Skipping {len(external_vpcs)} VPCs not in accounts.yaml")
 
                     for source_vpc, dest_vpcs in tgw_topology.vpc_connectivity_matrix.items():
+                        # Skip if source VPC not in accounts.yaml
+                        if source_vpc not in account_vpc_ids:
+                            continue
+
                         source_acc = vpc_to_account.get(source_vpc, {})
 
                         for dest_vpc in dest_vpcs:
                             if source_vpc == dest_vpc:
+                                continue
+
+                            # Skip if dest VPC not in accounts.yaml
+                            if dest_vpc not in account_vpc_ids:
                                 continue
 
                             dest_acc = vpc_to_account.get(dest_vpc, {})
