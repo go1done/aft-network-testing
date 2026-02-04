@@ -199,6 +199,13 @@ def main():
 
     # Setup authentication
     exec_mode = get_execution_mode(args.mode)
+
+    # Validate local mode has required auth
+    if exec_mode == ExecutionMode.LOCAL and args.phase not in ['export-test-plan']:
+        if not args.profile and not args.profile_pattern:
+            print("Error: Local mode requires either --profile or --profile-pattern")
+            sys.exit(1)
+
     auth = AuthConfig(
         mode=exec_mode,
         profile_name=args.profile,
@@ -207,15 +214,17 @@ def main():
         region=args.region
     )
 
-    # Load account configurations
-    try:
-        accounts = load_accounts(args.accounts_file)
-    except FileNotFoundError:
-        print(f"Error: Accounts file not found: {args.accounts_file}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error loading accounts file: {str(e)}")
-        sys.exit(1)
+    # Load account configurations (not needed for test-plan phases)
+    accounts = []
+    if args.phase not in ['export-test-plan', 'run-test-plan']:
+        try:
+            accounts = load_accounts(args.accounts_file)
+        except FileNotFoundError:
+            print(f"Error: Accounts file not found: {args.accounts_file}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error loading accounts file: {str(e)}")
+            sys.exit(1)
 
     if args.verbose:
         print(f"Loaded {len(accounts)} accounts from {args.accounts_file}")

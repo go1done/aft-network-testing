@@ -479,8 +479,10 @@ class AFTTestOrchestrator:
                         'id': f'test-{test_id:03d}',
                         'enabled': True,
                         'source_vpc': pattern['source_vpc_id'],
+                        'source_account_id': pattern.get('source_account_id'),
                         'source_account': pattern['source_account_name'],
                         'dest_vpc': pattern['dest_vpc_id'],
+                        'dest_account_id': pattern.get('dest_account_id'),
                         'dest_account': pattern['dest_account_name'],
                         'connection_type': conn_type,
                         'connection_id': connection_id,
@@ -514,8 +516,10 @@ class AFTTestOrchestrator:
                         'id': f'test-{test_id:03d}',
                         'enabled': True,
                         'source_vpc': pattern['source_vpc_id'],
+                        'source_account_id': pattern.get('source_account_id'),
                         'source_account': pattern['source_account_name'],
                         'dest_vpc': pattern['dest_vpc_id'],
+                        'dest_account_id': pattern.get('dest_account_id'),
                         'dest_account': pattern['dest_account_name'],
                         'connection_type': conn_type,
                         'connection_id': connection_id,
@@ -600,6 +604,24 @@ class AFTTestOrchestrator:
         print(f"Total tests: {len(tests)}")
         print(f"Enabled: {len(enabled_tests)}, Disabled: {len(disabled_tests)}")
 
+        # Set fallback account for profile-pattern mode
+        # Extract account ID from test plan (needed for auth when using --profile-pattern)
+        fallback_account_id = None
+        if enabled_tests:
+            fallback_account_id = enabled_tests[0].get('source_account_id')
+
+        # If no account ID in test plan, try to get from golden path
+        if not fallback_account_id and self.golden_path:
+            patterns = self.golden_path.get('connectivity', {}).get('patterns', [])
+            if patterns:
+                fallback_account_id = patterns[0].get('source_account_id')
+
+        if fallback_account_id:
+            self.tester.set_fallback_account(fallback_account_id)
+        elif self.auth.uses_profile_pattern():
+            print("Warning: No account ID found in test plan or golden path.")
+            print("Re-export test plan with: aft-test --phase export-test-plan --golden-path <path>")
+
         start_time = datetime.utcnow()
         all_results = []
 
@@ -653,6 +675,7 @@ class AFTTestOrchestrator:
         }
 
         if publish and self.auth:
-            publish_results(summary, self.auth.get_hub_session(), self.s3_bucket)
+            fallback_id = enabled_tests[0].get('source_account_id') if enabled_tests else None
+            publish_results(summary, self.auth.get_hub_session(fallback_account_id=fallback_id), self.s3_bucket)
 
         return summary
