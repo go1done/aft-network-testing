@@ -79,7 +79,8 @@ class ReachabilityTester:
             return None
 
         att = attachments['TransitGatewayVpcAttachments'][0]
-        owner_id = att['TransitGatewayOwnerId']
+        # TransitGatewayOwnerId only present for RAM-shared TGWs, fall back to VpcOwnerId
+        owner_id = att.get('TransitGatewayOwnerId') or att.get('VpcOwnerId')
         att_id = att['TransitGatewayAttachmentId']
 
         return f"arn:aws:ec2:{self.region}:{owner_id}:transit-gateway-attachment/{att_id}"
@@ -484,7 +485,9 @@ class ReachabilityTester:
             return None
 
         att = attachments['TransitGatewayVpcAttachments'][0]
-        return f"arn:aws:ec2:{self.region}:{att['TransitGatewayOwnerId']}:transit-gateway-attachment/{att['TransitGatewayAttachmentId']}"
+        # TransitGatewayOwnerId only present for RAM-shared TGWs, fall back to VpcOwnerId
+        owner_id = att.get('TransitGatewayOwnerId') or att.get('VpcOwnerId')
+        return f"arn:aws:ec2:{self.region}:{owner_id}:transit-gateway-attachment/{att['TransitGatewayAttachmentId']}"
 
     def _find_suitable_eni(self, vpc_id: str) -> Optional[str]:
         """Find a suitable ENI for testing (Lambda, NAT GW, etc.)."""
