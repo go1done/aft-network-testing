@@ -30,4 +30,4 @@ config/golden_path.yaml
 # Results
 results/
 baselines/
-*.log
+*.log.claude/

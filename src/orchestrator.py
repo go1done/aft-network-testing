@@ -4,10 +4,34 @@ Thin orchestration layer that coordinates discovery, testing, and reporting.
 """
 
 import os
+import shutil
 import yaml
 from typing import Dict, List
 from dataclasses import asdict
 from datetime import datetime
+
+
+def backup_file_if_exists(filepath: str) -> str:
+    """
+    Backup existing file with timestamp before overwriting.
+
+    Args:
+        filepath: Path to the file to backup
+
+    Returns:
+        Path to backup file if created, empty string otherwise
+    """
+    if not os.path.exists(filepath):
+        return ""
+
+    # Generate backup filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base, ext = os.path.splitext(filepath)
+    backup_path = f"{base}_{timestamp}{ext}"
+
+    # Copy to backup (preserves original until new write succeeds)
+    shutil.copy2(filepath, backup_path)
+    return backup_path
 
 from models import (
     ExecutionMode,
@@ -161,7 +185,11 @@ class AFTTestOrchestrator:
             }
         }
 
-        # Save golden path
+        # Save golden path (backup existing file first)
+        backup_path = backup_file_if_exists(self.golden_path_file)
+        if backup_path:
+            print(f"  ℹ️  Previous golden path backed up to {backup_path}")
+
         with open(self.golden_path_file, 'w') as f:
             yaml.dump(golden_path, f, default_flow_style=False)
 
@@ -518,6 +546,11 @@ class AFTTestOrchestrator:
             'filters': filters_applied if filters_applied else None,
             'tests': tests,
         }
+
+        # Backup existing test plan first
+        backup_path = backup_file_if_exists(output_file)
+        if backup_path:
+            print(f"  ℹ️  Previous test plan backed up to {backup_path}")
 
         with open(output_file, 'w') as f:
             yaml.dump(test_plan, f, default_flow_style=False, sort_keys=False)
