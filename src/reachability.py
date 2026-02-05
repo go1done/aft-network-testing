@@ -146,7 +146,8 @@ class ReachabilityTester:
                               dest_vpc: str,
                               tgw_id: str,
                               protocol: str = '-1',
-                              port: int = None) -> TestCase:
+                              port: int = None,
+                              path_meta: Dict = None) -> TestCase:
         """Test reachability via Transit Gateway."""
         start_time = time.time()
 
@@ -163,7 +164,7 @@ class ReachabilityTester:
                 )
 
             analysis_id = self._create_reachability_analysis(
-                source_arn, dest_arn, protocol, port
+                source_arn, dest_arn, protocol, port, path_meta
             )
 
             result = self._wait_for_analysis(analysis_id)
@@ -190,7 +191,8 @@ class ReachabilityTester:
                                   dest_vpc: str,
                                   peering_id: str,
                                   protocol: str = '-1',
-                                  port: int = None) -> TestCase:
+                                  port: int = None,
+                                  path_meta: Dict = None) -> TestCase:
         """Test reachability via VPC Peering."""
         start_time = time.time()
 
@@ -230,7 +232,7 @@ class ReachabilityTester:
                 )
 
             analysis_id = self._create_reachability_analysis(
-                source_eni, dest_eni, protocol, port
+                source_eni, dest_eni, protocol, port, path_meta
             )
 
             result = self._wait_for_analysis(analysis_id)
@@ -256,7 +258,8 @@ class ReachabilityTester:
                               vpc_id: str,
                               vpn_id: str,
                               protocol: str = '-1',
-                              port: int = None) -> TestCase:
+                              port: int = None,
+                              path_meta: Dict = None) -> TestCase:
         """Test VPN connectivity by validating tunnel status."""
         start_time = time.time()
 
@@ -320,7 +323,8 @@ class ReachabilityTester:
                                       vpc_id: str,
                                       endpoint_id: str,
                                       protocol: str = 'tcp',
-                                      port: int = 443) -> TestCase:
+                                      port: int = 443,
+                                      path_meta: Dict = None) -> TestCase:
         """
         Test VPC Endpoint connectivity using actual path analysis.
 
@@ -334,6 +338,7 @@ class ReachabilityTester:
             endpoint_id: VPC Endpoint ID (vpce-xxx)
             protocol: Protocol to test (default: tcp)
             port: Port to test (default: 443)
+            path_meta: Metadata for NRA path naming
 
         Returns:
             TestCase with path analysis result
@@ -405,7 +410,7 @@ class ReachabilityTester:
 
             # Create and run path analysis
             analysis_id = self._create_reachability_analysis(
-                source_eni_arn, dest_eni_arn, protocol, port
+                source_eni_arn, dest_eni_arn, protocol, port, path_meta
             )
 
             result = self._wait_for_analysis(analysis_id)
@@ -438,29 +443,49 @@ class ReachabilityTester:
                           dest_vpc: str,
                           connection_id: str,
                           protocol: str = '-1',
-                          port: int = None) -> TestCase:
+                          port: int = None,
+                          source_account: str = None,
+                          dest_account: str = None) -> TestCase:
         """
         Unified interface that dispatches to appropriate test method
         based on connection type.
+
+        Args:
+            connection_type: Type of connection (TGW, peering, VPN, PrivateLink)
+            source_vpc: Source VPC ID
+            dest_vpc: Destination VPC ID
+            connection_id: Connection resource ID (tgw-xxx, pcx-xxx, etc.)
+            protocol: Protocol to test ('-1' for all, 'tcp', 'udp')
+            port: Port number (optional)
+            source_account: Source account name (for NRA path naming)
+            dest_account: Destination account name (for NRA path naming)
         """
+        # Build path metadata for naming in NRA
+        path_meta = {
+            'source_account': source_account or 'unknown',
+            'dest_account': dest_account or 'unknown',
+            'connection_type': connection_type.value,
+            'connection_id': connection_id,
+        }
+
         if connection_type == ConnectionType.TRANSIT_GATEWAY:
             return self.test_tgw_reachability(
-                source_vpc, dest_vpc, connection_id, protocol, port
+                source_vpc, dest_vpc, connection_id, protocol, port, path_meta
             )
 
         elif connection_type == ConnectionType.VPC_PEERING:
             return self.test_peering_reachability(
-                source_vpc, dest_vpc, connection_id, protocol, port
+                source_vpc, dest_vpc, connection_id, protocol, port, path_meta
             )
 
         elif connection_type == ConnectionType.VPN:
             return self.test_vpn_reachability(
-                source_vpc, connection_id, protocol, port
+                source_vpc, connection_id, protocol, port, path_meta
             )
 
         elif connection_type == ConnectionType.PRIVATELINK:
             return self.test_privatelink_reachability(
-                source_vpc, connection_id, protocol, port
+                source_vpc, connection_id, protocol, port, path_meta
             )
 
         else:
@@ -565,7 +590,8 @@ class ReachabilityTester:
                             source_arn: str,
                             dest_arn: str,
                             protocol: str,
-                            port: Optional[int]) -> str:
+                            port: Optional[int],
+                            path_meta: Dict = None) -> str:
         """
         Get existing path or create new one (idempotent).
         Returns path_id.
@@ -575,11 +601,38 @@ class ReachabilityTester:
         if existing_path:
             return existing_path
 
+        # Build descriptive name for NRA console
+        if path_meta:
+            src = path_meta.get('source_account', 'unknown')
+            dst = path_meta.get('dest_account', 'unknown')
+            conn_type = path_meta.get('connection_type', 'unknown')
+            port_str = str(port) if port else 'all'
+            path_name = f"aft: {src} -> {dst} ({conn_type}) {protocol}:{port_str}"
+        else:
+            path_name = f"aft-network-test-{protocol}-{port or 'all'}"
+
+        # Build tags
+        tags = [
+            {'Key': 'Name', 'Value': path_name[:255]},  # AWS tag limit
+            {'Key': 'CreatedBy', 'Value': 'aft-network-testing'},
+        ]
+        if path_meta:
+            tags.extend([
+                {'Key': 'SourceAccount', 'Value': path_meta.get('source_account', 'unknown')[:255]},
+                {'Key': 'DestAccount', 'Value': path_meta.get('dest_account', 'unknown')[:255]},
+                {'Key': 'ConnectionType', 'Value': path_meta.get('connection_type', 'unknown')},
+                {'Key': 'ConnectionId', 'Value': path_meta.get('connection_id', 'unknown')[:255]},
+            ])
+
         # Create new path
         params = {
             'Source': source_arn,
             'Destination': dest_arn,
-            'Protocol': protocol
+            'Protocol': protocol,
+            'TagSpecifications': [{
+                'ResourceType': 'network-insights-path',
+                'Tags': tags
+            }]
         }
 
         if port and protocol in ['tcp', 'udp']:
@@ -598,9 +651,10 @@ class ReachabilityTester:
                                       source_arn: str,
                                       dest_arn: str,
                                       protocol: str,
-                                      port: Optional[int]) -> str:
+                                      port: Optional[int],
+                                      path_meta: Dict = None) -> str:
         """Create Network Insights analysis (idempotent path creation)."""
-        path_id = self._get_or_create_path(source_arn, dest_arn, protocol, port)
+        path_id = self._get_or_create_path(source_arn, dest_arn, protocol, port, path_meta)
 
         analysis = self.ec2.start_network_insights_analysis(
             NetworkInsightsPathId=path_id

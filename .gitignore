@@ -31,3 +31,4 @@ config/golden_path.yaml
 results/
 baselines/
 *.log.claude/
+.coverage

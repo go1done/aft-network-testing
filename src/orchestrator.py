@@ -342,7 +342,9 @@ class AFTTestOrchestrator:
                     dest_vpc=test['dest_vpc'],
                     connection_id=test['connection_id'],
                     protocol=test['protocol'],
-                    port=test.get('port')
+                    port=test.get('port'),
+                    source_account=test['source_account'],
+                    dest_account=test['dest_account']
                 )
 
                 all_results.append(result)
@@ -651,7 +653,9 @@ class AFTTestOrchestrator:
                 dest_vpc=test['dest_vpc'],
                 connection_id=test['connection_id'],
                 protocol=test['protocol'],
-                port=test.get('port')
+                port=test.get('port'),
+                source_account=test.get('source_account'),
+                dest_account=test.get('dest_account')
             )
 
             all_results.append(result)

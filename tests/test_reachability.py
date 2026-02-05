@@ -42,11 +42,16 @@ class TestReachabilityTesterTestConnectivity:
             connection_id="tgw-123",
             protocol="tcp",
             port=443,
+            source_account="account-a",
+            dest_account="account-b",
         )
 
-        tester.test_tgw_reachability.assert_called_once_with(
-            "vpc-source", "vpc-dest", "tgw-123", "tcp", 443
-        )
+        # Verify called with correct args (path_meta dict is passed as last param)
+        tester.test_tgw_reachability.assert_called_once()
+        call_args = tester.test_tgw_reachability.call_args[0]
+        assert call_args[:5] == ("vpc-source", "vpc-dest", "tgw-123", "tcp", 443)
+        assert call_args[5]['source_account'] == "account-a"
+        assert call_args[5]['dest_account'] == "account-b"
 
     def test_test_connectivity_peering(self):
         tester = ReachabilityTester()
