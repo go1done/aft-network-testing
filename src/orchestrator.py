@@ -9,6 +9,7 @@ import yaml
 from typing import Dict, List
 from dataclasses import asdict
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def backup_file_if_exists(filepath: str) -> str:
@@ -571,7 +572,7 @@ class AFTTestOrchestrator:
             'filtered_patterns': filtered_patterns,
         }
 
-    def run_from_test_plan(self, test_plan_file: str, publish: bool = False) -> Dict:
+    def run_from_test_plan(self, test_plan_file: str, publish: bool = False, max_parallel: int = 3) -> Dict:
         """
         Execute tests from a test plan file.
 
@@ -581,6 +582,7 @@ class AFTTestOrchestrator:
         Args:
             test_plan_file: Path to test plan YAML file
             publish: Whether to publish results to CloudWatch/S3
+            max_parallel: Maximum concurrent tests (default: 3, use 1 for sequential)
 
         Returns:
             Test summary dictionary
@@ -605,6 +607,8 @@ class AFTTestOrchestrator:
 
         print(f"Total tests: {len(tests)}")
         print(f"Enabled: {len(enabled_tests)}, Disabled: {len(disabled_tests)}")
+        if max_parallel > 1:
+            print(f"Parallel execution: {max_parallel} concurrent tests")
 
         # Set fallback account for profile-pattern mode
         # Extract account ID from test plan (needed for auth when using --profile-pattern)
@@ -627,21 +631,16 @@ class AFTTestOrchestrator:
         start_time = datetime.utcnow()
         all_results = []
 
-        # Execute enabled tests
-        for test in enabled_tests:
-            print(
-                f"\nTesting [{test['connection_type'].upper()}]: "
-                f"{test['source_account']} -> {test['dest_account']} "
-                f"({test['protocol']}:{test.get('port', 'all')})"
-            )
+        # Map string to ConnectionType enum
+        conn_type_map = {
+            'tgw': ConnectionType.TRANSIT_GATEWAY,
+            'pcx': ConnectionType.VPC_PEERING,
+            'vpn': ConnectionType.VPN,
+            'vpce': ConnectionType.PRIVATELINK,
+        }
 
-            # Map string to ConnectionType enum
-            conn_type_map = {
-                'tgw': ConnectionType.TRANSIT_GATEWAY,
-                'pcx': ConnectionType.VPC_PEERING,
-                'vpn': ConnectionType.VPN,
-                'vpce': ConnectionType.PRIVATELINK,
-            }
+        def run_single_test(test):
+            """Execute a single test and return result with test info."""
             connection_type = conn_type_map.get(
                 test['connection_type'],
                 ConnectionType.TRANSIT_GATEWAY
@@ -657,11 +656,39 @@ class AFTTestOrchestrator:
                 source_account=test.get('source_account'),
                 dest_account=test.get('dest_account')
             )
+            return test, result
 
-            all_results.append(result)
+        # Execute tests (parallel or sequential)
+        if max_parallel > 1 and len(enabled_tests) > 1:
+            # Parallel execution
+            print(f"\nRunning {len(enabled_tests)} tests with {max_parallel} workers...")
+            with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+                futures = {executor.submit(run_single_test, test): test for test in enabled_tests}
 
-            status_icon = "✓" if result.result == TestResult.PASS else "✗"
-            print(f"  {status_icon} {result.name}: {result.message}")
+                for future in as_completed(futures):
+                    test, result = future.result()
+                    all_results.append(result)
+
+                    status_icon = "✓" if result.result == TestResult.PASS else "✗"
+                    print(
+                        f"  {status_icon} [{test['connection_type'].upper()}] "
+                        f"{test['source_account']} -> {test['dest_account']} "
+                        f"({test['protocol']}:{test.get('port', 'all')}): {result.message}"
+                    )
+        else:
+            # Sequential execution
+            for test in enabled_tests:
+                print(
+                    f"\nTesting [{test['connection_type'].upper()}]: "
+                    f"{test['source_account']} -> {test['dest_account']} "
+                    f"({test['protocol']}:{test.get('port', 'all')})"
+                )
+
+                _, result = run_single_test(test)
+                all_results.append(result)
+
+                status_icon = "✓" if result.result == TestResult.PASS else "✗"
+                print(f"  {status_icon} {result.name}: {result.message}")
 
         end_time = datetime.utcnow()
         summary = {

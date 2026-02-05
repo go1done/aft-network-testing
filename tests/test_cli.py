@@ -35,7 +35,7 @@ class TestParseArgs:
             '--golden-path', 'custom/golden.yaml',
             '--s3-bucket', 'my-bucket',
             '--publish-results',
-            '--parallel',
+            '--parallel', '5',
             '--dry-run',
             '--verbose',
         ]):
@@ -51,7 +51,7 @@ class TestParseArgs:
             assert args.golden_path == 'custom/golden.yaml'
             assert args.s3_bucket == 'my-bucket'
             assert args.publish_results is True
-            assert args.parallel is True
+            assert args.parallel == 5
             assert args.dry_run is True
             assert args.verbose is True
 

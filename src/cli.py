@@ -148,9 +148,9 @@ Examples:
 
     parser.add_argument(
         '--parallel',
-        action='store_true',
-        default=True,
-        help='Run tests in parallel (default: True)'
+        type=int,
+        default=3,
+        help='Number of parallel tests (default: 3, use 1 for sequential)'
     )
 
     parser.add_argument(
@@ -323,7 +323,11 @@ def main():
     elif args.phase == 'run-test-plan':
         # Run from test plan file
         try:
-            summary = orchestrator.run_from_test_plan(args.test_plan, args.publish_results)
+            summary = orchestrator.run_from_test_plan(
+                args.test_plan,
+                args.publish_results,
+                max_parallel=args.parallel
+            )
         except FileNotFoundError:
             print(f"Error: Test plan not found: {args.test_plan}")
             print(f"Run 'aft-test --phase export-test-plan' first to generate a test plan.")
