@@ -12,8 +12,20 @@ Uses AWS Reachability Analyzer for network path analysis.
 import boto3
 import time
 from typing import Dict, Optional
+from botocore.exceptions import ClientError
 
 from models import ConnectionType, TestResult, TestCase
+
+
+# Retryable error codes
+RETRYABLE_ERRORS = [
+    'RequestExpired',
+    'ExpiredTokenException',
+    'ExpiredToken',
+    'Throttling',
+    'RequestLimitExceeded',
+    'ServiceUnavailable',
+]
 
 
 class ReachabilityTester:
@@ -56,6 +68,75 @@ class ReachabilityTester:
         if self._ec2 is None:
             self._ec2 = self._get_hub_session().client('ec2')
         return self._ec2
+
+    def _refresh_ec2_client(self):
+        """Refresh EC2 client with new credentials."""
+        # Clear cached session and client
+        if self.auth_config:
+            self.auth_config.clear_session_cache()
+        self._hub_session = None
+        self._ec2 = None
+        # Force re-initialization
+        _ = self.ec2
+
+    def _retry_on_error(self, func, *args, max_retries: int = 5, **kwargs):
+        """
+        Retry function on throttling or expired credentials.
+
+        Prioritizes throttling handling with longer backoff.
+
+        Args:
+            func: Function to call
+            max_retries: Maximum retry attempts
+            *args, **kwargs: Arguments to pass to function
+
+        Returns:
+            Function result
+
+        Raises:
+            Last exception if all retries fail
+        """
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                last_error = e
+
+                if error_code in ['Throttling', 'RequestLimitExceeded', 'TooManyRequestsException']:
+                    # Throttling: longer exponential backoff (5, 10, 20, 40, 80 seconds)
+                    wait_time = 5 * (2 ** attempt)
+                    print(f"  ⚠️  API throttled, waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
+                elif error_code in ['RequestExpired', 'ExpiredTokenException', 'ExpiredToken']:
+                    # Credential expiry: refresh and retry quickly
+                    wait_time = 2
+                    print(f"  ⚠️  Credentials expired, refreshing...")
+                    time.sleep(wait_time)
+                    self._refresh_ec2_client()
+                elif error_code == 'ServiceUnavailable':
+                    wait_time = 10 * (attempt + 1)
+                    print(f"  ⚠️  Service unavailable, waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    raise
+            except Exception as e:
+                error_str = str(e).lower()
+                if 'expired' in error_str or 'expiredtoken' in error_str:
+                    last_error = e
+                    print(f"  ⚠️  Token expired, refreshing credentials...")
+                    time.sleep(2)
+                    self._refresh_ec2_client()
+                elif 'throttl' in error_str or 'rate' in error_str:
+                    last_error = e
+                    wait_time = 5 * (2 ** attempt)
+                    print(f"  ⚠️  Rate limited, waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    raise
+
+        raise last_error
 
     def set_fallback_account(self, account_id: str):
         """Set the fallback account ID for profile-pattern mode."""
@@ -656,19 +737,24 @@ class ReachabilityTester:
         """Create Network Insights analysis (idempotent path creation)."""
         path_id = self._get_or_create_path(source_arn, dest_arn, protocol, port, path_meta)
 
-        analysis = self.ec2.start_network_insights_analysis(
-            NetworkInsightsPathId=path_id
-        )
+        def start_analysis():
+            return self.ec2.start_network_insights_analysis(
+                NetworkInsightsPathId=path_id
+            )
 
+        analysis = self._retry_on_error(start_analysis)
         return analysis['NetworkInsightsAnalysis']['NetworkInsightsAnalysisId']
 
     def _wait_for_analysis(self, analysis_id: str, timeout: int = 300) -> Dict:
-        """Wait for analysis to complete."""
+        """Wait for analysis to complete with retry on expired credentials."""
         start = time.time()
         while time.time() - start < timeout:
-            response = self.ec2.describe_network_insights_analyses(
-                NetworkInsightsAnalysisIds=[analysis_id]
-            )
+            def describe_analysis():
+                return self.ec2.describe_network_insights_analyses(
+                    NetworkInsightsAnalysisIds=[analysis_id]
+                )
+
+            response = self._retry_on_error(describe_analysis)
 
             analysis = response['NetworkInsightsAnalyses'][0]
             status = analysis['Status']
