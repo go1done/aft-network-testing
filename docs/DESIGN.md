@@ -269,6 +269,53 @@ aft-test --mode aws --phase post-release ...
    - Future: SNS notifications, PagerDuty, Slack integration
    - Consideration: Alert fatigue, actionable alerts only
 
+### Design Decisions
+
+#### Hub-and-Spoke TGW Testing Strategy
+
+In a hub-and-spoke Transit Gateway architecture:
+
+```
+Spoke A ←→ TGW ←→ Hub VPC ←→ TGW ←→ Spoke B
+```
+
+**Question:** Should we test direct spoke-to-spoke paths (A→B, B→A) in addition to spoke-hub paths?
+
+**Decision:** No. Testing spoke↔hub links is sufficient for regression detection.
+
+**Rationale:**
+
+The current implementation discovers and tests connectivity based on TGW route tables:
+- Spoke A → Hub ✓
+- Hub → Spoke A ✓
+- Spoke B → Hub ✓
+- Hub → Spoke B ✓
+
+This is sufficient for regression testing because:
+
+1. **Route breakage**: If Spoke A → Spoke B breaks, it's because either:
+   - Spoke A → Hub broke (caught by existing test)
+   - Hub → Spoke B broke (caught by existing test)
+
+2. **Security group changes**: Any SG change blocking spoke-to-spoke would also affect:
+   - Spoke's egress to Hub, OR
+   - Hub's ingress/egress, OR
+   - Spoke's ingress from Hub
+
+3. **TGW attachment issues**: Would manifest in spoke ↔ hub tests
+
+4. **NACL changes**: Would affect the individual spoke↔hub links
+
+5. **Transitive property**: If A→Hub AND Hub→B both pass, then A→B via Hub will work
+
+**When spoke-to-spoke tests would be redundant:**
+- They would only fail if one of the underlying spoke↔hub tests also fails
+- Adding them increases test count without improving regression detection
+
+**Edge cases covered:**
+- Hub route table misconfiguration (not forwarding between spokes) → shows up as Hub→Spoke failures
+- Asymmetric routing issues → caught by testing both directions of each link
+
 ### Known Limitations
 
 | Limitation | Workaround |
