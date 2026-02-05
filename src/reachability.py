@@ -12,19 +12,28 @@ Uses AWS Reachability Analyzer for network path analysis.
 import boto3
 import time
 from typing import Dict, Optional
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from models import ConnectionType, TestResult, TestCase
 
 
-# Retryable error codes
-RETRYABLE_ERRORS = [
+# Boto3 client config with adaptive retry
+# Handles transient throttling automatically
+BOTO3_CONFIG = Config(
+    retries={
+        'max_attempts': 10,
+        'mode': 'adaptive'  # Adjusts retry behavior based on error responses
+    },
+    connect_timeout=10,
+    read_timeout=60
+)
+
+# Errors that need session refresh (not just retry)
+CREDENTIAL_ERRORS = [
     'RequestExpired',
     'ExpiredTokenException',
     'ExpiredToken',
-    'Throttling',
-    'RequestLimitExceeded',
-    'ServiceUnavailable',
 ]
 
 
@@ -64,9 +73,9 @@ class ReachabilityTester:
 
     @property
     def ec2(self):
-        """Lazy-initialized EC2 client."""
+        """Lazy-initialized EC2 client with adaptive retry."""
         if self._ec2 is None:
-            self._ec2 = self._get_hub_session().client('ec2')
+            self._ec2 = self._get_hub_session().client('ec2', config=BOTO3_CONFIG)
         return self._ec2
 
     def _refresh_ec2_client(self):
@@ -79,15 +88,16 @@ class ReachabilityTester:
         # Force re-initialization
         _ = self.ec2
 
-    def _retry_on_error(self, func, *args, max_retries: int = 5, **kwargs):
+    def _retry_on_error(self, func, *args, max_retries: int = 3, **kwargs):
         """
-        Retry function on throttling or expired credentials.
+        Retry function on expired credentials.
 
-        Prioritizes throttling handling with longer backoff.
+        Boto3 adaptive retry handles throttling automatically.
+        This handles credential expiry which requires session refresh.
 
         Args:
             func: Function to call
-            max_retries: Maximum retry attempts
+            max_retries: Maximum retry attempts for credential errors
             *args, **kwargs: Arguments to pass to function
 
         Returns:
@@ -104,35 +114,21 @@ class ReachabilityTester:
                 error_code = e.response.get('Error', {}).get('Code', '')
                 last_error = e
 
-                if error_code in ['Throttling', 'RequestLimitExceeded', 'TooManyRequestsException']:
-                    # Throttling: longer exponential backoff (5, 10, 20, 40, 80 seconds)
-                    wait_time = 5 * (2 ** attempt)
-                    print(f"  ⚠️  API throttled, waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                    time.sleep(wait_time)
-                elif error_code in ['RequestExpired', 'ExpiredTokenException', 'ExpiredToken']:
-                    # Credential expiry: refresh and retry quickly
-                    wait_time = 2
-                    print(f"  ⚠️  Credentials expired, refreshing...")
-                    time.sleep(wait_time)
+                if error_code in CREDENTIAL_ERRORS:
+                    # Credential expiry: refresh session and retry
+                    print(f"  ⚠️  Credentials expired, refreshing session...")
+                    time.sleep(1)
                     self._refresh_ec2_client()
-                elif error_code == 'ServiceUnavailable':
-                    wait_time = 10 * (attempt + 1)
-                    print(f"  ⚠️  Service unavailable, waiting {wait_time}s...")
-                    time.sleep(wait_time)
                 else:
+                    # Let boto3's adaptive retry handle other errors
                     raise
             except Exception as e:
                 error_str = str(e).lower()
                 if 'expired' in error_str or 'expiredtoken' in error_str:
                     last_error = e
-                    print(f"  ⚠️  Token expired, refreshing credentials...")
-                    time.sleep(2)
+                    print(f"  ⚠️  Token expired, refreshing session...")
+                    time.sleep(1)
                     self._refresh_ec2_client()
-                elif 'throttl' in error_str or 'rate' in error_str:
-                    last_error = e
-                    wait_time = 5 * (2 ** attempt)
-                    print(f"  ⚠️  Rate limited, waiting {wait_time}s...")
-                    time.sleep(wait_time)
                 else:
                     raise
 
